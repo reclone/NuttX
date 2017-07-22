@@ -170,7 +170,6 @@
 #define STM32_RCC_DCKCFGR2_CK48MSRC   RCC_DCKCFGR2_CK48MSEL_PLL
 #define STM32_RCC_DCKCFGR2_SDMMCSRC   RCC_DCKCFGR2_SDMMCSEL_48MHZ
 #define STM32_RCC_DCKCFGR2_SDMMC2SRC  RCC_DCKCFGR2_SDMMC2SEL_48MHZ
-#define STM32_RCC_DCKCFGR2_DSISRC     RCC_DCKCFGR2_DSISEL_48MHZ
 
 
 /* Several prescalers allow the configuration of the two AHB buses, the
@@ -449,7 +448,7 @@
  *   -------- ------------ -------------
  *   PG11     RMII_TX_EN   TXEN
  *   PG13     RMII_TXD0    TXD0
- *   PG14     RMII_TXD1    TXD1
+ *   PB13     RMII_TXD1    TXD1
  *   PC4      RMII_RXD0    RXD0/MODE0
  *   PC5      RMII_RXD1    RXD1/MODE1
  *   PG2      RMII_RXER    RXER/PHYAD0 -- Not used
@@ -466,7 +465,7 @@
 
 #define GPIO_ETH_RMII_TX_EN   GPIO_ETH_RMII_TX_EN_2
 #define GPIO_ETH_RMII_TXD0    GPIO_ETH_RMII_TXD0_2
-#define GPIO_ETH_RMII_TXD1    GPIO_ETH_RMII_TXD1_2
+#define GPIO_ETH_RMII_TXD1    GPIO_ETH_RMII_TXD1_1
 
 /************************************************************************************
  * Public Data

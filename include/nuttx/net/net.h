@@ -64,6 +64,11 @@
 # define __SOCKFD_OFFSET 0
 #endif
 
+/* Capabilities of a socket */
+
+#define SOCKCAP_NONBLOCKING (1 << 0)  /* Bit 0: Socket supports non-blocking
+                                       *        operation. */
+
 /****************************************************************************
  * Public Types
  ****************************************************************************/
@@ -94,11 +99,56 @@ typedef uint16_t sockopt_t;
 
 typedef uint16_t socktimeo_t;
 
+/* This type defines the type of the socket capabilities set */
+
+typedef uint8_t sockcaps_t;
+
+/* This callbacks are socket operations that may be performed on a socket of
+ * a given address family.
+ */
+
+struct socket;  /* Forward reference */
+struct pollfd;  /* Forward reference */
+
+struct sock_intf_s
+{
+  CODE int        (*si_setup)(FAR struct socket *psock, int protocol);
+  CODE sockcaps_t (*si_sockcaps)(FAR struct socket *psock);
+  CODE void       (*si_addref)(FAR struct socket *psock);
+  CODE int        (*si_bind)(FAR struct socket *psock,
+                    FAR const struct sockaddr *addr, socklen_t addrlen);
+  CODE int        (*si_getsockname)(FAR struct socket *psock,
+                    FAR struct sockaddr *addr, FAR socklen_t *addrlen);
+  CODE int        (*si_listen)(FAR struct socket *psock, int backlog);
+  CODE int        (*si_connect)(FAR struct socket *psock,
+                    FAR const struct sockaddr *addr, socklen_t addrlen);
+  CODE int        (*si_accept)(FAR struct socket *psock, FAR struct sockaddr *addr,
+                    FAR socklen_t *addrlen, FAR struct socket *newsock);
+#ifndef CONFIG_DISABLE_POLL
+  CODE int        (*si_poll)(FAR struct socket *psock,
+                    FAR struct pollfd *fds, bool setup);
+#endif
+  CODE ssize_t    (*si_send)(FAR struct socket *psock, FAR const void *buf,
+                    size_t len, int flags);
+  CODE ssize_t    (*si_sendto)(FAR struct socket *psock, FAR const void *buf,
+                    size_t len, int flags, FAR const struct sockaddr *to,
+                    socklen_t tolen);
+#ifdef CONFIG_NET_SENDFILE
+  CODE ssize_t    (*si_sendfile)(FAR struct socket *psock,
+                    FAR struct file *infile, FAR off_t *offset,
+                    size_t count)
+#endif
+  CODE ssize_t    (*si_recvfrom)(FAR struct socket *psock, FAR void *buf,
+                    size_t len, int flags, FAR struct sockaddr *from,
+                    FAR socklen_t *fromlen);
+  CODE int        (*si_close)(FAR struct socket *psock);
+};
+
 /* This is the internal representation of a socket reference by a file
  * descriptor.
  */
 
-struct devif_callback_s;     /* Forward reference */
+struct devif_callback_s;  /* Forward reference */
 
 struct socket
 {
@@ -119,6 +169,10 @@ struct socket
 #endif
 
   FAR void     *s_conn;      /* Connection: struct tcp_conn_s or udp_conn_s */
+
+  /* Socket interface */
+
+  FAR const struct sock_intf_s *s_sockif;
 
 #ifdef CONFIG_NET_TCP_WRITE_BUFFERS
   /* Callback instance for TCP send */
