@@ -49,11 +49,29 @@
 
 #include <nuttx/clock.h>
 #include <nuttx/net/net.h>
-#include "tcp/tcp.h"
 
 /****************************************************************************
  * Pre-processor Definitions
  ****************************************************************************/
+
+/* Configuration */
+
+#undef HAVE_INET_SOCKETS
+#undef HAVE_PFINET_SOCKETS
+#undef HAVE_PFINET6_SOCKETS
+
+#if defined(CONFIG_NET_IPv4) || defined(CONFIG_NET_IPv6) || \
+    defined(CONFIG_NET_USRSOCK)
+#  define HAVE_INET_SOCKETS
+
+#  if defined(CONFIG_NET_IPv4) || defined(CONFIG_NET_USRSOCK)
+#    define HAVE_PFINET_SOCKETS
+#  endif
+
+#  if defined(CONFIG_NET_IPv6) || defined(CONFIG_NET_USRSOCK)
+#    define HAVE_PFINET6_SOCKETS
+#  endif
+#endif
 
 /* Definitions of 8-bit socket flags */
 
@@ -149,11 +167,15 @@ extern "C"
 #define EXTERN extern
 #endif
 
+#ifdef HAVE_INET_SOCKETS
+EXTERN const struct sock_intf_s g_inet_sockif;
+#endif
+
 /****************************************************************************
  * Public Function Prototypes
  ****************************************************************************/
 
-#ifdef NET_TCP_HAVE_STACK
+#if defined(CONFIG_NET_TCP) && !defined(CONFIG_NET_TCP_NO_STACK)
 struct tcp_conn_s; /* Forward reference */
 #endif
 
@@ -172,7 +194,7 @@ struct tcp_conn_s; /* Forward reference */
  *
  ****************************************************************************/
 
-int  sockfd_allocate(int minsd);
+int sockfd_allocate(int minsd);
 
 /****************************************************************************
  * Name: sock_release
@@ -224,6 +246,23 @@ void sockfd_release(int sockfd);
 FAR struct socket *sockfd_socket(int sockfd);
 
 /****************************************************************************
+ * Name: net_sockif
+ *
+ * Description:
+ *   Return the socket interface associated with this address family.
+ *
+ * Parameters:
+ *   family - Address family
+ *
+ * Returned Value:
+ *   On success, a non-NULL instance of struct sock_intf_s is returned.  NULL
+ *   is returned only if the address family is not supported.
+ *
+ ****************************************************************************/
+
+FAR const struct sock_intf_s *net_sockif(sa_family_t family);
+
+/****************************************************************************
  * Name: net_startmonitor
  *
  * Description:
@@ -244,7 +283,7 @@ FAR struct socket *sockfd_socket(int sockfd);
  *
  ****************************************************************************/
 
-#ifdef NET_TCP_HAVE_STACK
+#if defined(CONFIG_NET_TCP) && !defined(CONFIG_NET_TCP_NO_STACK)
 int net_startmonitor(FAR struct socket *psock);
 #endif
 
@@ -266,7 +305,7 @@ int net_startmonitor(FAR struct socket *psock);
  *
  ****************************************************************************/
 
-#ifdef NET_TCP_HAVE_STACK
+#if defined(CONFIG_NET_TCP) && !defined(CONFIG_NET_TCP_NO_STACK)
 void net_stopmonitor(FAR struct tcp_conn_s *conn);
 #endif
 
@@ -288,7 +327,7 @@ void net_stopmonitor(FAR struct tcp_conn_s *conn);
  *
  ****************************************************************************/
 
-#ifdef NET_TCP_HAVE_STACK
+#if defined(CONFIG_NET_TCP) && !defined(CONFIG_NET_TCP_NO_STACK)
 void net_lostconnection(FAR struct socket *psock, uint16_t flags);
 #endif
 
@@ -410,12 +449,153 @@ int net_timeo(systime_t start_time, socktimeo_t timeo);
  *     In this case the process will also receive a SIGPIPE unless
  *     MSG_NOSIGNAL is set.
  *
- * Assumptions:
- *
  ****************************************************************************/
 
 ssize_t psock_send(FAR struct socket *psock, FAR const void *buf, size_t len,
                    int flags);
+
+/****************************************************************************
+ * Name: ipv4_getsockname and ipv6_sockname
+ *
+ * Description:
+ *   The ipv4_getsockname() and ipv6_getsocknam() function retrieve the
+ *   locally-bound name of the specified INET socket.
+ *
+ * Parameters:
+ *   psock    Point to the socket structure instance [in]
+ *   addr     sockaddr structure to receive data [out]
+ *   addrlen  Length of sockaddr structure [in/out]
+ *
+ * Returned Value:
+ *   On success, 0 is returned, the 'addr' argument points to the address
+ *   of the socket, and the 'addrlen' argument points to the length of the
+ *   address.  Otherwise, a negated errno value is returned.  See
+ *   getsockname() for the list of returned error values.
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_NET_IPv4
+int ipv4_getsockname(FAR struct socket *psock, FAR struct sockaddr *addr,
+                     FAR socklen_t *addrlen);
+#endif
+#ifdef CONFIG_NET_IPv6
+int ipv6_getsockname(FAR struct socket *psock, FAR struct sockaddr *addr,
+                     FAR socklen_t *addrlen);
+#endif
+
+/****************************************************************************
+ * Name: inet_connect
+ *
+ * Description:
+ *   inet_connect() connects the local socket referred to by the structure
+ *   'psock' to the address specified by 'addr'. The addrlen argument
+ *   specifies the size of 'addr'.  The format of the address in 'addr' is
+ *   determined by the address space of the socket 'psock'.
+ *
+ *   If the socket 'psock' is of type SOCK_DGRAM then 'addr' is the address
+ *   to which datagrams are sent by default, and the only address from which
+ *   datagrams are received. If the socket is of type SOCK_STREAM or
+ *   SOCK_SEQPACKET, this call attempts to make a connection to the socket
+ *   that is bound to the address specified by 'addr'.
+ *
+ *   Generally, connection-based protocol sockets may successfully
+ *   inet_connect() only once; connectionless protocol sockets may use
+ *   inet_connect() multiple times to change their association.
+ *   Connectionless sockets may dissolve the association by connecting to
+ *   an address with the sa_family member of sockaddr set to AF_UNSPEC.
+ *
+ * Parameters:
+ *   psock     Pointer to a socket structure initialized by psock_socket()
+ *   addr      Server address (form depends on type of socket)
+ *   addrlen   Length of actual 'addr'
+ *
+ * Returned Value:
+ *   0 on success; a negated errno value on failue.  See connect() for the
+ *   list of appropriate errno values to be returned.
+ *
+ ****************************************************************************/
+
+int inet_connect(FAR struct socket *psock, FAR const struct sockaddr *addr,
+                 socklen_t addrlen);
+
+/****************************************************************************
+ * Name: inet_sendfile
+ *
+ * Description:
+ *   The inet_sendfile() call may be used only when the INET socket is in a
+ *   connected state (so that the intended recipient is known).
+ *
+ * Parameters:
+ *   psock    An instance of the internal socket structure.
+ *   buf      Data to send
+ *   len      Length of data to send
+ *   flags    Send flags
+ *
+ * Returned Value:
+ *   On success, returns the number of characters sent.  On  error,
+ *   a negated errno value is returned.  See sendfile() for a list
+ *   appropriate error return values.
+ *
+ ****************************************************************************/
+
+#if defined(CONFIG_NET_SENDFILE) && defined(CONFIG_NET_TCP) && \
+    !defined(CONFIG_NET_TCP_NO_STACK)
+ssize_t inet_sendfile(FAR struct socket *psock, FAR struct file *infile,
+                      FAR off_t *offset, size_t count);
+#endif
+
+/****************************************************************************
+ * Name: inet_recvfrom
+ *
+ * Description:
+ *   Implements the socket recvfrom interface for the case of the AF_INET
+ *   and AF_INET6 address families.  inet_recvfrom() receives messages from
+ *   a socket, and may be used to receive data on a socket whether or not it
+ *   is connection-oriented.
+ *
+ *   If 'from' is not NULL, and the underlying protocol provides the source
+ *   address, this source address is filled in.  The argument 'fromlen' is
+ *   initialized to the size of the buffer associated with from, and
+ *   modified on return to indicate the actual size of the address stored
+ *   there.
+ *
+ * Parameters:
+ *   psock    A pointer to a NuttX-specific, internal socket structure
+ *   buf      Buffer to receive data
+ *   len      Length of buffer
+ *   flags    Receive flags
+ *   from     Address of source (may be NULL)
+ *   fromlen  The length of the address structure
+ *
+ * Returned Value:
+ *   On success, returns the number of characters received.  If no data is
+ *   available to be received and the peer has performed an orderly shutdown,
+ *   recv() will return 0.  Otherwise, on errors, a negated errno value is
+ *   returned (see recvfrom() for the list of appropriate error values).
+ *
+ ****************************************************************************/
+
+ssize_t inet_recvfrom(FAR struct socket *psock, FAR void *buf, size_t len,
+                      int flags, FAR struct sockaddr *from,
+                      FAR socklen_t *fromlen);
+
+/****************************************************************************
+ * Name: inet_close
+ *
+ * Description:
+ *   Performs the close operation on an AF_INET or AF_INET6 socket instance
+ *
+ * Parameters:
+ *   psock   Socket instance
+ *
+ * Returned Value:
+ *   0 on success; -1 on error with errno set appropriately.
+ *
+ * Assumptions:
+ *
+ ****************************************************************************/
+
+int inet_close(FAR struct socket *psock);
 
 #undef EXTERN
 #if defined(__cplusplus)
