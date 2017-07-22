@@ -58,8 +58,7 @@
  ************************************************************************************/
 
 /* Clocking *************************************************************************/
-/* The STM32F4 Discovery board features a single 8MHz crystal.  Space is provided
- * for a 32kHz RTC backup crystal, but it is not stuffed.
+/* The Reclone Rise board features a 10MHz oscillator and a 32kHz RTC backup crystal.
  *
  * This is the canonical configuration:
  *   System Clock source           : PLL (HSE)
@@ -68,9 +67,9 @@
  *   AHB Prescaler                 : 1            (STM32_RCC_CFGR_HPRE)
  *   APB1 Prescaler                : 4            (STM32_RCC_CFGR_PPRE1)
  *   APB2 Prescaler                : 2            (STM32_RCC_CFGR_PPRE2)
- *   HSE Frequency(Hz)             : 8000000      (STM32_BOARD_XTAL)
- *   PLLM                          : 8            (STM32_PLLCFG_PLLM)
- *   PLLN                          : 336          (STM32_PLLCFG_PLLN)
+ *   HSE Frequency(Hz)             : 10000000     (STM32_BOARD_XTAL)
+ *   PLLM                          : 5            (STM32_PLLCFG_PLLM)
+ *   PLLN                          : 168          (STM32_PLLCFG_PLLN)
  *   PLLP                          : 2            (STM32_PLLCFG_PLLP)
  *   PLLQ                          : 7            (STM32_PLLCFG_PLLQ)
  *   Main regulator output voltage : Scale1 mode  Needed for high speed SYSCLK
@@ -84,11 +83,11 @@
 
 /* HSI - 16 MHz RC factory-trimmed
  * LSI - 32 KHz RC
- * HSE - On-board crystal frequency is 8MHz
+ * HSE - On-board oscillator frequency is 10MHz
  * LSE - 32.768 kHz
  */
 
-#define STM32_BOARD_XTAL        8000000ul
+#define STM32_BOARD_XTAL        10000000ul
 
 #define STM32_HSI_FREQUENCY     16000000ul
 #define STM32_LSI_FREQUENCY     32000
@@ -108,8 +107,13 @@
  *         = 48,000,000
  */
 
-#define STM32_PLLCFG_PLLM       RCC_PLLCFG_PLLM(8)
-#define STM32_PLLCFG_PLLN       RCC_PLLCFG_PLLN(336)
+#define STM32_BOARD_USEHSI
+#ifdef STM32_BOARD_USEHSI
+  #define STM32_PLLCFG_PLLM       RCC_PLLCFG_PLLM(8)
+#else
+  #define STM32_PLLCFG_PLLM       RCC_PLLCFG_PLLM(5)
+#endif
+#define STM32_PLLCFG_PLLN       RCC_PLLCFG_PLLN(168)
 #define STM32_PLLCFG_PLLP       RCC_PLLCFG_PLLP_2
 #define STM32_PLLCFG_PLLQ       RCC_PLLCFG_PLLQ(7)
 
@@ -241,33 +245,14 @@
 #define BUTTON_USER_BIT    (1 << BUTTON_USER)
 
 /* Alternate function pin selections ************************************************/
-/* CAN */
-
-#ifndef CONFIG_STM32_FSMC
-#  define GPIO_CAN1_RX GPIO_CAN1_RX_3
-#  define GPIO_CAN1_TX GPIO_CAN1_TX_3
-#endif
-
-#ifndef CONFIG_STM32_ETHMAC
-#  define GPIO_CAN2_RX GPIO_CAN2_RX_1
-#  define GPIO_CAN2_TX GPIO_CAN2_TX_1
-#endif
 
 /* USART1:
  *
  * The Reclone Rise connects to USART1 through its USB-to-Serial connection.
  */
+
 #define GPIO_USART1_RX GPIO_USART1_RX_1
 #define GPIO_USART1_TX GPIO_USART1_TX_1
-
-
-/* PWM
- *
- * The STM32F4 Discovery has no real on-board PWM devices, but the board can be
- * configured to output a pulse train using TIM4 CH2 on PD13.
- */
-
-#define GPIO_TIM4_CH2OUT GPIO_TIM4_CH2OUT_2
 
 /* RGB LED
  *
@@ -277,76 +262,6 @@
 #define GPIO_TIM1_CH1OUT GPIO_TIM1_CH1OUT_2
 #define GPIO_TIM2_CH2OUT GPIO_TIM2_CH2OUT_1
 #define GPIO_TIM3_CH3OUT GPIO_TIM3_CH3OUT_1
-
-/* SPI - There is a MEMS device on SPI1 using these pins: */
-
-#define GPIO_SPI1_MISO   GPIO_SPI1_MISO_1
-#define GPIO_SPI1_MOSI   GPIO_SPI1_MOSI_1
-#define GPIO_SPI1_SCK    GPIO_SPI1_SCK_1
-
-/* SPI2 - Test MAX31855 on SPI2 PB10 = SCK, PB14 = MISO */
-
-#define GPIO_SPI2_MISO   GPIO_SPI2_MISO_1
-#define GPIO_SPI2_MOSI   GPIO_SPI2_MOSI_1
-#define GPIO_SPI2_SCK    GPIO_SPI2_SCK_1
-
-/* I2S3 - CS43L22 configuration uses I2S3 */
-
-#define GPIO_I2S3_SD     GPIO_I2S3_SD_2
-#define GPIO_I2S3_CK     GPIO_I2S3_CK_2
-#define GPIO_I2S3_WS     GPIO_I2S3_WS_1
-
-#define DMACHAN_I2S3_RX  DMAMAP_SPI3_RX_2
-#define DMACHAN_I2S3_TX  DMAMAP_SPI3_TX_2
-
-/* I2C config to use with Nunchuk PB7 (SDA) and PB8 (SCL) */
-
-#if 0
-#define GPIO_I2C1_SCL  GPIO_I2C1_SCL_2
-#define GPIO_I2C1_SDA  GPIO_I2C1_SDA_1
-#endif
-
-/* I2C.  Only I2C1 is available on the stm32f4discovery.  I2C1_SCL and I2C1_SDA are
- * available on the following pins:
- *
- * - PB6  is I2C1_SCL
- * - PB9  is I2C1_SDA
- */
-
-#define GPIO_I2C1_SCL    GPIO_I2C1_SCL_1
-#define GPIO_I2C1_SDA    GPIO_I2C1_SDA_2
-
-/* Timer Inputs/Outputs (see the README.txt file for options) */
-
-#define GPIO_TIM2_CH1IN  GPIO_TIM2_CH1IN_2
-#define GPIO_TIM2_CH2IN  GPIO_TIM2_CH2IN_1
-
-#define GPIO_TIM8_CH1IN  GPIO_TIM8_CH1IN_1
-#define GPIO_TIM8_CH2IN  GPIO_TIM8_CH2IN_1
-
-/* Ethernet *************************************************************************/
-
-#if defined(CONFIG_STM32F4DISBB) && defined(CONFIG_STM32_ETHMAC)
-  /* RMII interface to the LAN8720 PHY */
-
-#  ifndef CONFIG_STM32_RMII
-#    error CONFIG_STM32_RMII must be defined
-#  endif
-
-  /* Clocking is provided by an external 25Mhz XTAL */
-
-#  ifndef CONFIG_STM32_RMII_EXTCLK
-#    error CONFIG_STM32_RMII_EXTCLK must be defined
-#  endif
-
-  /* Pin disambiguation */
-
-#  define GPIO_ETH_RMII_TX_EN GPIO_ETH_RMII_TX_EN_1
-#  define GPIO_ETH_RMII_TXD0  GPIO_ETH_RMII_TXD0_1
-#  define GPIO_ETH_RMII_TXD1  GPIO_ETH_RMII_TXD1_1
-#  define GPIO_ETH_PPS_OUT    GPIO_ETH_PPS_OUT_1
-
-#endif
 
 /* DMA Channl/Stream Selections *****************************************************/
 /* Stream selections are arbitrary for now but might become important in the future
