@@ -844,6 +844,15 @@ config ARCH_BOARD_QEMU_I486
 		Port of NuttX to QEMU in i486 mode.  This port will also run on real i486
 		hardwared (Google the Bifferboard).
 
+config ARCH_BOARD_RECLONE_RISE
+	bool "Reclone Rise board"
+	depends on ARCH_CHIP_STM32F405VG
+	select ARCH_HAVE_LEDS
+	select ARCH_HAVE_BUTTONS
+	select ARCH_HAVE_IRQBUTTONS
+	---help---
+		Reclone Rise board based on the STMicro STM32F405VGT6 MCU.
+
 config ARCH_BOARD_SABRE_6QUAD
 	bool "NXP/Freescale i.MX6 Sabre-6Quad board"
 	depends on ARCH_CHIP_IMX6_6QUAD
@@ -1609,6 +1618,7 @@ config ARCH_BOARD
 	default "nucleo-l476rg"            if ARCH_BOARD_NUCLEO_L476RG
 	default "nucleo-l496zg"            if ARCH_BOARD_NUCLEO_L496ZG
 	default "qemu-i486"                if ARCH_BOARD_QEMU_I486
+	default "reclone-rise"             if ARCH_BOARD_RECLONE_RISE
 	default "sabre-6quad"              if ARCH_BOARD_SABRE_6QUAD
 	default "sama5d2-xult"             if ARCH_BOARD_SAMA5D2_XULT
 	default "sama5d3x-ek"              if ARCH_BOARD_SAMA5D3X_EK
@@ -1942,6 +1952,9 @@ source "configs/nucleo-l496zg/Kconfig"
 endif
 if ARCH_BOARD_QEMU_I486
 source "configs/qemu-i486/Kconfig"
+endif
+if ARCH_BOARD_RECLONE_RISE
+source "configs/reclone-rise/Kconfig"
 endif
 if ARCH_BOARD_SABRE_6QUAD
 source "configs/sabre-6quad/Kconfig"
