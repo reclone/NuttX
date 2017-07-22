@@ -1,5 +1,5 @@
 ############################################################################
-# configs/stm32f4discovery/src/Makefile
+# configs/reclone-rise/src/Makefile
 #
 #   Copyright (C) 2011-2013, 2015-2016 Gregory Nutt. All rights reserved.
 #   Author: Gregory Nutt <gnutt@nuttx.org>
@@ -36,56 +36,18 @@
 -include $(TOPDIR)/Make.defs
 
 ASRCS =
-CSRCS = stm32_boot.c stm32_bringup.c stm32_spi.c
-
-ifeq ($(CONFIG_ARCH_LEDS),y)
-CSRCS += stm32_autoleds.c
-else
-CSRCS += stm32_userleds.c
-endif
-
-ifeq ($(CONFIG_AUDIO_CS43L22),y)
-CSRCS += stm32_cs43l22.c
-endif
+CSRCS = stm32_boot.c stm32_bringup.c stm32_spi.c stm32_userleds.c
 
 ifeq ($(CONFIG_ARCH_BUTTONS),y)
 CSRCS +=  stm32_buttons.c
-endif
-
-ifeq ($(CONFIG_CAN),y)
-CSRCS += stm32_can.c
 endif
 
 ifeq ($(CONFIG_STM32_OTGFS),y)
 CSRCS += stm32_usb.c
 endif
 
-ifeq ($(CONFIG_BH1750FVI),y)
-CSRCS += stm32_bh1750fvi.c
-endif
-
-ifeq ($(CONFIG_BMP180),y)
-CSRCS += stm32_bmp180.c
-endif
-
-ifeq ($(CONFIG_MAX31855),y)
-CSRCS += stm32_max31855.c
-endif
-
-ifeq ($(CONFIG_MAX6675),y)
-CSRCS += stm32_max6675.c
-endif
-
-ifeq ($(CONFIG_PCA9635PW),y)
-CSRCS += stm32_pca9635.c
-endif
-
 ifeq ($(CONFIG_STM32_SDIO),y)
 CSRCS += stm32_sdio.c
-endif
-
-ifeq ($(CONFIG_STM32_ETHMAC),y)
-CSRCS += stm32_ethernet.c
 endif
 
 ifeq ($(CONFIG_RGBLED),y)
@@ -94,14 +56,6 @@ endif
 
 ifeq ($(CONFIG_PWM),y)
 CSRCS += stm32_pwm.c
-endif
-
-ifeq ($(CONFIG_QENCODER),y)
-CSRCS += stm32_qencoder.c
-endif
-
-ifeq ($(CONFIG_XEN1210),y)
-CSRCS += stm32_xen1210.c
 endif
 
 ifeq ($(CONFIG_NSH_LIBRARY),y)
@@ -116,36 +70,12 @@ ifeq ($(CONFIG_PM_BUTTONS),y)
 CSRCS += stm32_pmbuttons.c
 endif
 
-ifeq ($(CONFIG_ZEROCROSS),y)
-CSRCS += stm32_zerocross.c
-endif
-
 ifeq ($(CONFIG_ARCH_IDLE_CUSTOM),y)
 CSRCS += stm32_idle.c
 endif
 
 ifeq ($(CONFIG_STM32_FSMC),y)
 CSRCS += stm32_extmem.c
-
-ifeq ($(CONFIG_LCD_SSD1289),y)
-CSRCS += stm32_ssd1289.c
-endif
-endif
-
-ifeq ($(CONFIG_LCD_SSD1351),y)
-CSRCS += stm32_ssd1351.c
-endif
-
-ifeq ($(CONFIG_LCD_UG2864AMBAG01),y)
-CSRCS += stm32_ug2864ambag01.c
-endif
-
-ifeq ($(CONFIG_LCD_UG2864HSWEG01),y)
-CSRCS += stm32_ug2864hsweg01.c
-endif
-
-ifeq ($(CONFIG_EXAMPLES_OSTEST),y)
-CSRCS += stm32_ostest.c
 endif
 
 ifeq ($(CONFIG_TIMER),y)
