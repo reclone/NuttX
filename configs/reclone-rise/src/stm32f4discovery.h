@@ -217,11 +217,11 @@
 /* LEDs */
 
 #define GPIO_LED1       (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_50MHz|\
-                         GPIO_OUTPUT_CLEAR|GPIO_PORTB|GPIO_PIN9)
+                         GPIO_OUTPUT_CLEAR|GPIO_PORTB|GPIO_PIN6)
 #define GPIO_LED2       (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_50MHz|\
                          GPIO_OUTPUT_CLEAR|GPIO_PORTB|GPIO_PIN8)
 #define GPIO_LED3       (GPIO_OUTPUT|GPIO_PUSHPULL|GPIO_SPEED_50MHz|\
-                         GPIO_OUTPUT_CLEAR|GPIO_PORTB|GPIO_PIN6)
+                         GPIO_OUTPUT_CLEAR|GPIO_PORTB|GPIO_PIN9)
 
 /* BUTTONS -- NOTE that all have EXTI interrupts configured */
 
