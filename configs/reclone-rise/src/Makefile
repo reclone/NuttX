@@ -36,12 +36,10 @@
 -include $(TOPDIR)/Make.defs
 
 ASRCS =
-CSRCS = stm32_boot.c stm32_bringup.c stm32_spi.c stm32_userleds.c
+CSRCS = stm32_boot.c stm32_bringup.c stm32_spi.c
 
 ifeq ($(CONFIG_ARCH_LEDS),y)
 CSRCS += stm32_autoleds.c
-else
-CSRCS += stm32_userleds.c
 endif
 
 ifeq ($(CONFIG_ARCH_BUTTONS),y)
@@ -58,10 +56,6 @@ endif
 
 ifeq ($(CONFIG_RGBLED),y)
 CSRCS += stm32_rgbled.c
-endif
-
-ifeq ($(CONFIG_PWM),y)
-CSRCS += stm32_pwm.c
 endif
 
 ifeq ($(CONFIG_NSH_LIBRARY),y)

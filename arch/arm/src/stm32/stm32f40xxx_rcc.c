@@ -641,7 +641,6 @@ static void stm32_stdclockconfig(void)
 
 #else /* if STM32_BOARD_USEHSE */
   /* Enable External High-Speed Clock (HSE) */
-  board_autoled_on(LED_IRQSENABLED);
 #ifdef STM32_RCC_CR_HSEBYP
   regval  = getreg32(STM32_RCC_CR);
   regval &= ~RCC_CR_HSION;
@@ -752,7 +751,6 @@ static void stm32_stdclockconfig(void)
       putreg32(regval, STM32_RCC_CR);
 
       /* Wait until the PLL is ready */
-      board_autoled_on(LED_IRQSENABLED);
 
       while ((getreg32(STM32_RCC_CR) & RCC_CR_PLLRDY) == 0)
         {

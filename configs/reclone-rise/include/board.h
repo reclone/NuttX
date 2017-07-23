@@ -255,12 +255,12 @@
 
 /* RGB LED
  *
- * R = TIM1 CH1 on PE9 | G = TIM2 CH2 on PA1 | B = TIM3 CH3 on PB0
+ * R = TIM11 CH1 on PB9 | G = TIM10 CH1 on PB8 | B = TIM4 CH1 on PB6
  */
 
-#define GPIO_TIM1_CH1OUT GPIO_TIM1_CH1OUT_2
-#define GPIO_TIM2_CH2OUT GPIO_TIM2_CH2OUT_1
-#define GPIO_TIM3_CH3OUT GPIO_TIM3_CH3OUT_1
+#define GPIO_TIM11_CH1OUT GPIO_TIM11_CH1OUT_1
+#define GPIO_TIM10_CH1OUT GPIO_TIM10_CH1OUT_1
+#define GPIO_TIM4_CH1OUT  GPIO_TIM4_CH1OUT_1
 
 /* DMA Channl/Stream Selections *****************************************************/
 /* Stream selections are arbitrary for now but might become important in the future

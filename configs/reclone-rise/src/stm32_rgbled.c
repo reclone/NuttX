@@ -62,27 +62,27 @@
 #  undef HAVE_RGBLED
 #endif
 
-#ifndef CONFIG_STM32_TIM1
+#ifndef CONFIG_STM32_TIM4
 #  undef HAVE_RGBLED
 #endif
 
-#ifndef CONFIG_STM32_TIM2
+#ifndef CONFIG_STM32_TIM10
 #  undef HAVE_RGBLED
 #endif
 
-#ifndef CONFIG_STM32_TIM3
+#ifndef CONFIG_STM32_TIM11
 #  undef HAVE_RGBLED
 #endif
 
-#ifndef CONFIG_STM32_TIM1_PWM
+#ifndef CONFIG_STM32_TIM4_PWM
 #  undef HAVE_RGBLED
 #endif
 
-#ifndef CONFIG_STM32_TIM2_PWM
+#ifndef CONFIG_STM32_TIM10_PWM
 #  undef HAVE_RGBLED
 #endif
 
-#ifndef CONFIG_STM32_TIM3_PWM
+#ifndef CONFIG_STM32_TIM11_PWM
 #  undef HAVE_RGBLED
 #endif
 
@@ -115,7 +115,7 @@ int stm32_rgbled_setup(void)
     {
       /* Call stm32_pwminitialize() to get an instance of the PWM interface */
 
-      ledr = stm32_pwminitialize(1);
+      ledr = stm32_pwminitialize(11);
       if (!ledr)
         {
           lederr("ERROR: Failed to get the STM32 PWM lower half to LEDR\n");
@@ -134,7 +134,7 @@ int stm32_rgbled_setup(void)
 
       /* Call stm32_pwminitialize() to get an instance of the PWM interface */
 
-      ledg = stm32_pwminitialize(2);
+      ledg = stm32_pwminitialize(10);
       if (!ledg)
         {
           lederr("ERROR: Failed to get the STM32 PWM lower half to LEDG\n");
@@ -148,7 +148,7 @@ int stm32_rgbled_setup(void)
 
       /* Call stm32_pwminitialize() to get an instance of the PWM interface */
 
-      ledb = stm32_pwminitialize(3);
+      ledb = stm32_pwminitialize(4);
       if (!ledb)
         {
           lederr("ERROR: Failed to get the STM32 PWM lower half to LEDB\n");
