@@ -38,6 +38,12 @@
 ASRCS =
 CSRCS = stm32_boot.c stm32_bringup.c stm32_spi.c stm32_userleds.c
 
+ifeq ($(CONFIG_ARCH_LEDS),y)
+CSRCS += stm32_autoleds.c
+else
+CSRCS += stm32_userleds.c
+endif
+
 ifeq ($(CONFIG_ARCH_BUTTONS),y)
 CSRCS +=  stm32_buttons.c
 endif

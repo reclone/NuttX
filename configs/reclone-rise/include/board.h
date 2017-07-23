@@ -110,10 +110,12 @@
 #define STM32_BOARD_USEHSI
 #ifdef STM32_BOARD_USEHSI
   #define STM32_PLLCFG_PLLM       RCC_PLLCFG_PLLM(8)
+  #define STM32_PLLCFG_PLLN       RCC_PLLCFG_PLLN(168)
 #else
+  #define STM32_RCC_CR_HSEBYP
   #define STM32_PLLCFG_PLLM       RCC_PLLCFG_PLLM(5)
+  #define STM32_PLLCFG_PLLN       RCC_PLLCFG_PLLN(168)
 #endif
-#define STM32_PLLCFG_PLLN       RCC_PLLCFG_PLLN(168)
 #define STM32_PLLCFG_PLLP       RCC_PLLCFG_PLLP_2
 #define STM32_PLLCFG_PLLQ       RCC_PLLCFG_PLLQ(7)
 
@@ -209,20 +211,17 @@
 #define BOARD_LED1        0
 #define BOARD_LED2        1
 #define BOARD_LED3        2
-#define BOARD_LED4        3
-#define BOARD_NLEDS       4
+#define BOARD_NLEDS       3
 
-#define BOARD_LED_GREEN   BOARD_LED1
-#define BOARD_LED_ORANGE  BOARD_LED2
-#define BOARD_LED_RED     BOARD_LED3
-#define BOARD_LED_BLUE    BOARD_LED4
+#define BOARD_LED_RED     BOARD_LED1
+#define BOARD_LED_GREEN   BOARD_LED2
+#define BOARD_LED_BLUE    BOARD_LED3
 
 /* LED bits for use with board_userled_all() */
 
 #define BOARD_LED1_BIT    (1 << BOARD_LED1)
 #define BOARD_LED2_BIT    (1 << BOARD_LED2)
 #define BOARD_LED3_BIT    (1 << BOARD_LED3)
-#define BOARD_LED4_BIT    (1 << BOARD_LED4)
 
 /* If CONFIG_ARCH_LEDs is defined, then NuttX will control the 4 LEDs on board the
  * stm32f4discovery.  The following definitions describe how NuttX controls the LEDs:

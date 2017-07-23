@@ -641,11 +641,22 @@ static void stm32_stdclockconfig(void)
 
 #else /* if STM32_BOARD_USEHSE */
   /* Enable External High-Speed Clock (HSE) */
+  board_autoled_on(LED_IRQSENABLED);
+#ifdef STM32_RCC_CR_HSEBYP
+  regval  = getreg32(STM32_RCC_CR);
+  regval &= ~RCC_CR_HSION;
+  regval |= RCC_CR_HSEBYP;
+  putreg32(regval, STM32_RCC_CR);
+#endif
 
   regval  = getreg32(STM32_RCC_CR);
   regval |= RCC_CR_HSEON;           /* Enable HSE */
   putreg32(regval, STM32_RCC_CR);
 
+//#ifdef STM32_RCC_CR_HSEBYP
+//   timeout = HSERDY_TIMEOUT;
+//#else
+  
   /* Wait until the HSE is ready (or until a timeout elapsed) */
 
   for (timeout = HSERDY_TIMEOUT; timeout > 0; timeout--)
@@ -659,6 +670,9 @@ static void stm32_stdclockconfig(void)
           break;
         }
     }
+
+//#endif
+
 #endif
 
   /* Check for a timeout.  If this timeout occurs, then we are hosed.  We
@@ -738,6 +752,7 @@ static void stm32_stdclockconfig(void)
       putreg32(regval, STM32_RCC_CR);
 
       /* Wait until the PLL is ready */
+      board_autoled_on(LED_IRQSENABLED);
 
       while ((getreg32(STM32_RCC_CR) & RCC_CR_PLLRDY) == 0)
         {
