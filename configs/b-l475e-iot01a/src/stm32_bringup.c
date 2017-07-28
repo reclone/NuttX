@@ -97,5 +97,15 @@ int stm32l4_bringup(void)
 #endif /* CONFIG_USERLED_LOWER */
 #endif /* CONFIG_USERLED && !CONFIG_ARCH_LEDS */
 
+#ifdef HAVE_SPSGRF
+  /* Configure Spirit/SPSGRF wireless */
+
+  ret = stm32l4_spirit_initialize();
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: stm32l4_spirit_initialize() failed: %d\n", ret);
+    }
+#endif
+
   return ret;
 }

@@ -48,6 +48,11 @@
  * Pre-processor Definitions
  ****************************************************************************/
 
+/* All battery-related IOCTL commands must be defined in this header file
+ * in order to assure that every IOCTL command is unique and will not be
+ * aliased.
+ */
+
 #define BATIOC_STATE         _BATIOC(0x0001)
 #define BATIOC_HEALTH        _BATIOC(0x0002)
 #define BATIOC_ONLINE        _BATIOC(0x0003)
