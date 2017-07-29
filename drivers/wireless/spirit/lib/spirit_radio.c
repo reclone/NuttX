@@ -139,21 +139,6 @@ static const uint16_t g_vectn_vcofreq[16] =
 };
 
 /******************************************************************************
- * Private Functions
- ******************************************************************************/
-
-/******************************************************************************
- * Name:
- *
- * Description:
- *
- * Parameters:
- *
- * Returned Value:
- *
- ******************************************************************************/
-
-/******************************************************************************
  * Public Functions
  ******************************************************************************/
 
@@ -205,7 +190,7 @@ int spirit_radio_initialize(FAR struct spirit_library_s *spirit,
   /* Workaround for Vtune */
 
   value = 0xa0;
-  ret = spirit_reg_write(spirit, 0x9F, &value, 1);
+  ret = spirit_reg_write(spirit, 0x9f, &value, 1);
   if (ret < 0)
     {
       return ret;
@@ -236,7 +221,7 @@ int spirit_radio_initialize(FAR struct spirit_library_s *spirit,
 
       for (i = 0; i != 0xff; i++);
 
-      /* Reads the MC_STATUS register */
+      /* Read the MC_STATUS register */
 
       ret = spirit_update_status(spirit);
       if (ret < 0)
@@ -278,7 +263,7 @@ int spirit_radio_initialize(FAR struct spirit_library_s *spirit,
 
       for (i = 0; i != 0xff; i++);
 
-      /* Reads the MC_STATUS register */
+      /* Read the MC_STATUS register */
 
       ret = spirit_update_status(spirit);
       if (ret < 0)
@@ -364,7 +349,7 @@ int spirit_radio_initialize(FAR struct spirit_library_s *spirit,
       return ret;
     }
 
-  digregs[3] = (uint8_t) ((bwm << 4) | bwe);
+  digregs[3] = (uint8_t)((bwm << 4) | bwe);
 
   ifoff      = (3.0 * 480140) / (spirit->xtal_frequency >> 12) - 64;
   anaoffset  = ROUND(ifoff);
@@ -493,6 +478,183 @@ int spirit_radio_initialize(FAR struct spirit_library_s *spirit,
 }
 
 /******************************************************************************
+ * Name: spirit_radio_get_setup
+ *
+ * Description:
+ *   Returns the SPIRIT analog and digital radio structure according to the
+ *   registers value.
+ *
+ * Input Parameters:
+ *   spirit   - Reference to a Spirit library state structure instance
+ *   radioinit pointer to a struct radio_init_s that
+ *         contains the configuration information for the analog radio part of SPIRIT.
+ *
+ * Returned Value:
+ *   Zero (OK) returned on success; a negated errno value is returned on any
+ *   failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_get_setup(FAR struct spirit_library_s *spirit,
+                           FAR struct radio_init_s *radioinit)
+{
+  uint32_t synthword;
+  uint16_t xtaloff;
+  int16_t fcoffset;
+  uint8_t anaregs[8];
+  uint8_t digregs[4];
+  uint8_t refdiv;
+  uint8_t fdevm;
+  uint8_t fdeve;
+  uint8_t bwm;
+  uint8_t bwe;
+  uint8_t divider;
+  enum spirit_bandselect_e band;
+  int ret;
+
+#if 0
+  /* Get the RF board version */
+
+  enum spirit_version_e spirit_version = spirit_general_get_version(spirit);
+#endif
+
+  /* Read the Analog Radio registers */
+
+  ret = spirit_reg_read(spirit, SYNT3_BASE, anaregs, 8);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  /* Read the Digital Radio registers */
+
+  ret = spirit_reg_read(spirit, MOD1_BASE, digregs, 4);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  /* Get the operating band masking the Band selected field */
+
+  if ((anaregs[3] & 0x07) == SYNT0_BS_6)
+    {
+      band = HIGH_BAND;
+    }
+  else if ((anaregs[3] & 0x07) == SYNT0_BS_12)
+    {
+      band = MIDDLE_BAND;
+    }
+  else if ((anaregs[3] & 0x07) == SYNT0_BS_16)
+    {
+      band = LOW_BAND;
+    }
+  else if ((anaregs[3] & 0x07) == SYNT0_BS_32)
+    {
+      band = VERY_LOW_BAND;
+    }
+  else
+    {
+      uint8_t regval;
+
+      /* If it is another value, set it to a valid one in order to avoid access
+       * violation
+       */
+
+      regval = (anaregs[3] & 0xf8) | SYNT0_BS_6;
+      ret = spirit_reg_write(spirit, SYNT0_BASE, &regval, 1);
+      if (ret < 0)
+        {
+          return ret;
+        }
+
+      band = HIGH_BAND;
+    }
+
+  /* Compute the synth word */
+
+  synthword = ((((uint32_t)(anaregs[0] & 0x1f)) << 21) +
+               (((uint32_t)(anaregs[1])) << 13) +
+               (((uint32_t)(anaregs[2])) << 5) +
+               (((uint32_t)(anaregs[3])) >> 3));
+
+  /* Calculate the frequency base */
+
+  refdiv = (uint8_t)spirit_radio_get_refdiv(spirit) + 1;
+  radioinit->base_frequency = (uint32_t)
+    round(synthword * (((double)spirit->xtal_frequency) /
+                      (FBASE_DIVIDER * refdiv * g_vectc_bhalf[band])));
+
+  /* Calculate the Offset Factor */
+
+  xtaloff = (((uint16_t)anaregs[6] << 8) | (uint16_t)anaregs[7]);
+
+  /* If a negative number then convert the 12 bit 2-complement in a 16 bit
+   * number
+   */
+
+  if ((xtaloff & 0x0800) != 0)
+    {
+      xtaloff = xtaloff | 0xf000;
+    }
+  else
+    {
+      xtaloff = xtaloff & 0x0fff;
+    }
+
+  fcoffset = (int16_t)xtaloff;
+
+  /* Calculate the frequency offset in ppm */
+
+  radioinit->xtal_offset_ppm = (int16_t)
+    ((uint32_t)fcoffset * spirit->xtal_frequency * PPM_FACTOR) /
+    ((uint32_t)FBASE_DIVIDER * radioinit->base_frequency);
+
+  /* Channel space */
+
+  radioinit->chspace = anaregs[4] * (spirit->xtal_frequency >> 15);
+
+  /* Channel number */
+
+  radioinit->chnum = spirit_radio_get_channel(spirit);
+
+  /* Modulation select */
+
+  radioinit->modselect = (enum modulation_select_e)(digregs[1] & 0x70);
+
+  /* Get the frequency deviation for mantissa and exponent */
+
+  fdevm =  digregs[2] & 0x07;
+  fdeve = (digregs[2] & 0xf0) >> 4;
+
+  /* Get the channel filter register for mantissa and exponent */
+
+  bwm = (digregs[3] & 0xf0) >> 4;
+  bwe =  digregs[3] & 0x0f;
+
+  divider = spirit_radio_isenabled_digdivider(spirit);
+
+  /* Calculate the datarate */
+
+  radioinit->datarate =
+    ((spirit->xtal_frequency >> (5 + divider)) *
+     (256 + digregs[0])) >> (23 - (digregs[1] & 0x0f));
+
+  /* Calculates the frequency deviation */
+
+  radioinit->freqdev = (uint32_t)
+    ((float)spirit->xtal_frequency / (((uint32_t) 1) << 18) *
+     (uint32_t)((8.0 + fdevm) / 2 * (1 << fdeve)));
+
+  /* Get the channel filter bandwidth from the look-up table and return it */
+
+  radioinit->bandwidth = (uint32_t)
+    (100.0 * g_vectn_bandwidth[bwm + (bwe * 9)] *
+     ((spirit->xtal_frequency >> divider) / 26e6));
+
+  return OK;
+}
+
+/******************************************************************************
  * Name: spirit_radio_set_xtalflag
  *
  * Description:
@@ -500,9 +662,9 @@ int spirit_radio_initialize(FAR struct spirit_library_s *spirit,
  *
  * Input Parameters:
  *   spirit   - Reference to a Spirit library state structure instance
- *   xtalflag one of the possible value of the enum type xtal_flag_e.
- *         XTAL_FLAG_24_MHz:  in case of 24 MHz crystal
- *         XTAL_FLAG_26_MHz:  in case of 26 MHz crystal
+ *   xtalflag - One of the possible value of the enum type xtal_flag_e.
+ *              XTAL_FLAG_24_MHz:  in case of 24 MHz crystal
+ *              XTAL_FLAG_26_MHz:  in case of 26 MHz crystal
  *
  * Returned Value:
  *   Error code:  0=no error, <0=error during calibration of VCO.
@@ -519,7 +681,7 @@ int spirit_radio_set_xtalflag(FAR struct spirit_library_s *spirit,
 
   DEBUGASSERT(IS_XTAL_FLAG(xtalflag));
 
-  /* Reads the ANA_FUNC_CONF_0 register */
+  /* Read the ANA_FUNC_CONF_0 register */
 
   ret = spirit_reg_read(spirit, ANA_FUNC_CONF0_BASE, &regval, 1);
   if (ret >= 0)
@@ -559,7 +721,7 @@ enum xtal_flag_e spirit_radio_get_xtalflag(FAR struct spirit_library_s *spirit)
 {
   uint8_t regval;
 
-  /* Reads the Xtal configuration in the ANA_FUNC_CONF_0 register and return
+  /* Read the Xtal configuration in the ANA_FUNC_CONF_0 register and return
    * the value.
    */
 
@@ -667,13 +829,13 @@ uint32_t spirit_radio_get_synthword(FAR struct spirit_library_s *spirit)
 {
   uint8_t regvalues[4];
 
-  /* Reads the SYNTH registers, build the synth word and return it */
+  /* Read the SYNTH registers, build the synth word and return it */
 
   (void)spirit_reg_read(spirit, SYNT3_BASE, regvalues, 4);
-  return ((((uint32_t) (regvalues[0] & 0x1f)) << 21) +
-          (((uint32_t) (regvalues[1])) << 13) +
-          (((uint32_t) (regvalues[2])) << 5) +
-          (((uint32_t) (regvalues[3])) >> 3));
+  return ((((uint32_t)(regvalues[0] & 0x1f)) << 21) +
+          (((uint32_t)(regvalues[1])) << 13) +
+          (((uint32_t)(regvalues[2])) << 5) +
+          (((uint32_t)(regvalues[3])) >> 3));
 }
 
 /******************************************************************************
@@ -698,7 +860,7 @@ int spirit_radio_set_synthword(FAR struct spirit_library_s *spirit,
   uint8_t synt0;
   int ret;
 
-  /* Reads the SYNT0 register */
+  /* Read the SYNT0 register */
 
   ret = spirit_reg_read(spirit, SYNT0_BASE, &synt0, 1);
   if (ret < 0)
@@ -752,7 +914,7 @@ int spirit_radio_set_band(FAR struct spirit_library_s *spirit,
 
   DEBUGASSERT(IS_BAND_SELECTED(band));
 
-  /* Reads the SYNT0 register */
+  /* Read the SYNT0 register */
 
   ret = spirit_reg_read(spirit, SYNT0_BASE, &regval, 1);
   if (ret >= 0)
@@ -794,7 +956,7 @@ enum spirit_bandselect_e
 {
   uint8_t regval;
 
-  /* Reads the SYNT0 register */
+  /* Read the SYNT0 register */
 
   (void)spirit_reg_read(spirit, SYNT0_BASE, &regval, 1);
 
@@ -816,6 +978,54 @@ enum spirit_bandselect_e
     {
       return VERY_LOW_BAND;
     }
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_channel
+ *
+ * Description:
+ *   Sets the channel number.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   chnum the channel number.
+ *
+ * Returned Value:
+ *   Zero (OK) is returned on success.  A negated errno value is returned on
+ *   any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_channel(FAR struct spirit_library_s *spirit,
+                             uint8_t chnum)
+{
+  /* Write the CHNUM register */
+
+  return spirit_reg_write(spirit, CHNUM_BASE, &chnum, 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_channel
+ *
+ * Description:
+ *   Returns the actual channel number.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Actual channel number.
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_channel(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the CHNUM register and return the value */
+
+  (void)spirit_reg_read(spirit, CHNUM_BASE, &regval, 1);
+  return regval;
 }
 
 /******************************************************************************
@@ -871,7 +1081,7 @@ uint32_t spirit_radio_get_chspace(FAR struct spirit_library_s *spirit)
 {
   uint8_t factor;
 
-  /* Reads the CHSPACE register, calculate the channel space and return it */
+  /* Read the CHSPACE register, calculate the channel space and return it */
 
   (void)spirit_reg_read(spirit, CHSPACE_BASE, &factor, 1);
 
@@ -881,51 +1091,110 @@ uint32_t spirit_radio_get_chspace(FAR struct spirit_library_s *spirit)
 }
 
 /******************************************************************************
- * Name: spirit_radio_set_channel
+ * Name: spirit_radio_set_foffset_ppm
  *
  * Description:
- *   Sets the channel number.
+ *   Sets the FC OFFSET register starting from xtal ppm value.
  *
  * Input Parameters:
- *   spirit - Reference to a Spirit library state structure instance
- *   chnum the channel number.
+ *   spirit      - Reference to a Spirit library state structure instance
+ *   xtaloffset - The xtal offset expressed in ppm.
  *
  * Returned Value:
- *   Zero (OK) is returned on success.  A negated errno value is returned on
- *   any failure.
+ *   Zero (OK) returned on success; a negated errno value is returned on any
+ *   failure.
  *
  ******************************************************************************/
 
-int spirit_radio_set_channel(FAR struct spirit_library_s *spirit,
-                             uint8_t chnum)
+int spirit_radio_set_foffset_ppm(FAR struct spirit_library_s *spirit,
+                                 int16_t xtaloffset)
 {
-  /* Writes the CHNUM register */
+  enum spirit_bandselect_e band;
+  uint32_t synthword;
+  uint32_t fbase;
+  int32_t offset;
+  int16_t fcoffset;
+  uint8_t refdiv;
+  uint8_t tmp[2];
 
-  return spirit_reg_write(spirit, CHNUM_BASE, &chnum, 1);
+  /* Get the synth word */
+
+  synthword = spirit_radio_get_synthword(spirit);
+
+  /* Get the operating band */
+
+  band = spirit_radio_get_band(spirit);
+
+  /* Calculate the frequency base */
+
+  refdiv = (uint8_t)spirit_radio_get_refdiv(spirit) + 1;
+  fbase  = synthword * (spirit->xtal_frequency /
+                        (g_vectc_bhalf[band] * refdiv) /
+                        FBASE_DIVIDER);
+
+  /* Calculate the offset respect to RF frequency and according to xtal_ppm
+   * parameter */
+
+  offset = (int32_t)(((float)xtaloffset * fbase) / PPM_FACTOR);
+
+  /* Check the Offset is in the correct range */
+
+  DEBUGASSERT(IS_FREQUENCY_OFFSET(offset, spirit->xtal_frequency));
+
+  /* Calculate the FC_OFFSET value to write in the corresponding register */
+
+  fcoffset = (int16_t)(((float)offset * FBASE_DIVIDER) /
+                       spirit->xtal_frequency);
+
+  /* Build the array related to the FC_OFFSET_1 and FC_OFFSET_0 register */
+
+  tmp[0] = (uint8_t)((((uint16_t) fcoffset) >> 8) & 0x0f);
+  tmp[1] = (uint8_t)fcoffset;
+
+  /* Write the FC_OFFSET registers */
+
+  return spirit_reg_write(spirit, FC_OFFSET1_BASE, tmp, 2);
 }
 
 /******************************************************************************
- * Name: spirit_radio_get_channel
+ * Name: spirit_radio_set_foffset_hz
  *
  * Description:
- *   Returns the actual channel number.
+ *   Sets the FC OFFSET register starting from frequency offset expressed in Hz.
  *
  * Input Parameters:
- *   spirit - Reference to a Spirit library state structure instance
+ *   spirit  - Reference to a Spirit library state structure instance
+ *   foffset - Frequency offset expressed in Hz as signed word.
  *
  * Returned Value:
- *   Actual channel number.
+ *   Zero (OK) returned on success; a negated errno value is returned on any
+ *   failure.
  *
  ******************************************************************************/
 
-uint8_t spirit_radio_get_channel(FAR struct spirit_library_s *spirit)
+int spirit_radio_set_foffset_hz(FAR struct spirit_library_s *spirit,
+                                int32_t foffset)
 {
-  uint8_t regval;
+  uint8_t tmp[2];
+  int16_t offset;
 
-  /* Reads the CHNUM register and return the value */
+  /* Check that the Offset is in the correct range */
 
-  (void)spirit_reg_read(spirit, CHNUM_BASE, &regval, 1);
-  return regval;
+  DEBUGASSERT(IS_FREQUENCY_OFFSET(foffset, spirit->xtal_frequency));
+
+  /* Calculates the offset value to write in the FC_OFFSET register */
+
+  offset = (int16_t)(((float)foffset * FBASE_DIVIDER) /
+                     spirit->xtal_frequency);
+
+  /* Build the array related to the FC_OFFSET_1 and FC_OFFSET_0 register */
+
+  tmp[0] = (uint8_t)((((uint16_t) offset) >> 8) & 0x0f);
+  tmp[1] = (uint8_t)offset;
+
+  /* Write the FC_OFFSET registers */
+
+  return spirit_reg_write(spirit, FC_OFFSET1_BASE, tmp, 2);
 }
 
 /******************************************************************************
@@ -948,7 +1217,7 @@ int32_t spirit_radio_get_foffset(FAR struct spirit_library_s *spirit)
   int16_t fcoffset;
   uint8_t tmp[2];
 
-  /* Reads the FC_OFFSET registers */
+  /* Read the FC_OFFSET registers */
 
   (void)spirit_reg_read(spirit, FC_OFFSET1_BASE, tmp, 2);
 
@@ -1035,7 +1304,7 @@ int spirit_radio_set_basefrequency(FAR struct spirit_library_s *spirit,
 
   fc = fbase + foffset + chspace * chnum;
 
-  /* Reads the reference divider */
+  /* Read the reference divider */
 
   refdiv = (uint8_t)spirit_radio_get_refdiv(spirit) + 1;
 
@@ -1180,6 +1449,48 @@ uint32_t spirit_radio_get_basefrequency(FAR struct spirit_library_s *spirit)
 }
 
 /******************************************************************************
+ * Name: spirit_radio_get_centerfreq
+ *
+ * Description:
+ *   Returns the actual channel center frequency.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Actual channel center frequency expressed in Hz.
+ *
+ ******************************************************************************/
+
+uint32_t spirit_radio_get_centerfreq(FAR struct spirit_library_s *spirit)
+{
+  int32_t offset;
+  uint8_t channel;
+  uint32_t fbase;
+  uint32_t chspace;
+
+  /* Get the frequency base */
+
+  fbase = spirit_radio_get_basefrequency(spirit);
+
+  /* Get the frequency offset */
+
+  offset = spirit_radio_get_foffset(spirit);
+
+  /* Get the channel space */
+
+  chspace = spirit_radio_get_chspace(spirit);
+
+  /* Get the channel number */
+
+  channel = spirit_radio_get_channel(spirit);
+
+  /* Calculate the channel center frequency and return it */
+
+  return (uint32_t)(fbase + offset + (uint32_t)(chspace * channel));
+}
+
+/******************************************************************************
  * Name: spirit_radio_convert_datarate
  *
  * Description:
@@ -1267,71 +1578,7 @@ int spirit_radio_convert_datarate(FAR struct spirit_library_s *spirit,
 }
 
 /******************************************************************************
- * Name: spirit_radio_convert_freqdev
- *
- * Description:
- *   Returns the mantissa and exponent, whose value used in the frequency
- *   deviation formula will give a frequency deviation value most closer to
- *   the given frequency deviation.
- *
- * Input Parameters:
- *   spirit - Reference to a Spirit library state structure instance
- *   fdev   - Frequency deviation expressed in Hz. This parameter can be a
- *            value in the range [F_Xo*8/2^18, F_Xo*7680/2^18].
- *   pcm    - pointer to the returned mantissa value.
- *   pce    - pointer to the returned exponent value.
- *
- * Returned Value:
- *   Error code:  0=no error, <0=error during calibration of VCO.
- *
- ******************************************************************************/
-
-int spirit_radio_convert_freqdev(FAR struct spirit_library_s *spirit,
-                                 uint32_t fdev, FAR uint8_t *pcm,
-                                 FAR uint8_t *pce)
-{
-  uint32_t a;
-  uint32_t bp;
-  uint32_t b = 0;
-  uint8_t i;
-  float xtalDivtmp = (float)spirit->xtal_frequency / (((uint32_t) 1) << 18);
-
-  /* Check the parameters */
-
-  DEBUGASSERT(IS_F_DEV(fdev, spirit->xtal_frequency));
-
-  for (i = 0; i < 10; i++)
-    {
-      a = (uint32_t) (xtalDivtmp * (uint32_t) (7.5 * (1 << i)));
-      if (fdev < a)
-        {
-          break;
-        }
-    }
-
-  *pce = i;
-
-  for (i = 0; i < 8; i++)
-    {
-      bp = b;
-      b = (uint32_t)(xtalDivtmp * (uint32_t)((8.0 + i) / 2 * (1 << (*pce))));
-      if (fdev < b)
-        {
-          break;
-        }
-    }
-
-  if ((fdev - bp) < (b - fdev))
-    {
-      i--;
-    }
-
-  *pcm = i;
-  return OK;
-}
-
-/******************************************************************************
- * Name:
+ * Name: spirit_radio_convert_chbandwidth
  *
  * Description:
  *   Returns the mantissa and exponent for a given bandwidth.  Even if it is
@@ -1421,7 +1668,509 @@ int spirit_radio_convert_chbandwidth(FAR struct spirit_library_s *spirit,
 }
 
 /******************************************************************************
- * Name: spirit_radio_dbm2reg
+ * Name: spirit_radio_convert_freqdev
+ *
+ * Description:
+ *   Returns the mantissa and exponent, whose value used in the frequency
+ *   deviation formula will give a frequency deviation value most closer to
+ *   the given frequency deviation.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   fdev   - Frequency deviation expressed in Hz. This parameter can be a
+ *            value in the range [F_Xo*8/2^18, F_Xo*7680/2^18].
+ *   pcm    - pointer to the returned mantissa value.
+ *   pce    - pointer to the returned exponent value.
+ *
+ * Returned Value:
+ *   Error code:  0=no error, <0=error during calibration of VCO.
+ *
+ ******************************************************************************/
+
+int spirit_radio_convert_freqdev(FAR struct spirit_library_s *spirit,
+                                 uint32_t fdev, FAR uint8_t *pcm,
+                                 FAR uint8_t *pce)
+{
+  uint32_t a;
+  uint32_t bp;
+  uint32_t b = 0;
+  uint8_t i;
+  float xtalDivtmp = (float)spirit->xtal_frequency / (((uint32_t) 1) << 18);
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_F_DEV(fdev, spirit->xtal_frequency));
+
+  for (i = 0; i < 10; i++)
+    {
+      a = (uint32_t)(xtalDivtmp * (uint32_t)(7.5 * (1 << i)));
+      if (fdev < a)
+        {
+          break;
+        }
+    }
+
+  *pce = i;
+
+  for (i = 0; i < 8; i++)
+    {
+      bp = b;
+      b = (uint32_t)(xtalDivtmp * (uint32_t)((8.0 + i) / 2 * (1 << (*pce))));
+      if (fdev < b)
+        {
+          break;
+        }
+    }
+
+  if ((fdev - bp) < (b - fdev))
+    {
+      i--;
+    }
+
+  *pcm = i;
+  return OK;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_datarate
+ *
+ * Description:
+ *   Sets the datarate.
+ *
+ * Input Parameters:
+ *   spirit   - Reference to a Spirit library state structure instance
+ *   datarate - Datarate expressed in bps. This value must be in the range
+ *              [100 500000].
+ *
+ * Returned Value:
+ *   Zero (OK) is returned on succes; a negated errnor value is returned on any
+ *   failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_datarate(FAR struct spirit_library_s *spirit,
+                              uint32_t datarate)
+{
+  uint8_t dre, regval[2];
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_DATARATE(datarate));
+
+  /* Calculate the datarate mantissa and exponent */
+
+  ret = spirit_radio_convert_datarate(spirit, datarate, &regval[0], &dre);
+  if (ret >= 0)
+    {
+      /* Read the MOD_O register */
+
+      spirit_reg_read(spirit, MOD0_BASE, &regval[1], 1);
+
+      /* Mask the other fields and set the datarate exponent */
+
+      regval[1] &= 0xf0;
+      regval[1] |= dre;
+
+      /* Write the Datarate registers */
+
+      ret = spirit_reg_write(spirit, MOD1_BASE, regval, 2);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_datarate
+ *
+ * Description:
+ *   Returns the datarate.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Settled datarate expressed in bps.
+ *
+ ******************************************************************************/
+
+uint32_t spirit_radio_get_datarate(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval[2];
+  uint8_t divider = 0;
+
+  /* Read the datarate registers for mantissa and exponent */
+
+  (void)spirit_reg_read(spirit, MOD1_BASE, regval, 2);
+
+  /* Calculates the datarate */
+
+  divider = (uint8_t) spirit_radio_isenabled_digdivider(spirit);
+
+  return (((spirit->xtal_frequency >> (5 + divider)) *
+          (256 + regval[0])) >> (23 - (regval[1] & 0x0f)));
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_freqdev
+ *
+ * Description:
+ *   Sets the frequency deviation.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   fdev   - Frequency deviation expressed in Hz. Be sure that this value
+ *            is in the correct range [F_Xo*8/2^18, F_Xo*7680/2^18] Hz.
+ *
+ * Returned Value:
+ *   Zero (OK) is returned on succes; a negated errnor value is returned on any
+ *   failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_freqdev(FAR struct spirit_library_s *spirit,
+                             uint32_t fdev)
+{
+  uint8_t fdevm;
+  uint8_t fdeve;
+  uint8_t regval;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_F_DEV(fdev, spirit->xtal_frequency));
+
+  /* Calculates the frequency deviation mantissa and exponent */
+
+  ret = spirit_radio_convert_freqdev(spirit, fdev, &fdevm, &fdeve);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  /* Read the FDEV0 register */
+
+  ret = spirit_reg_read(spirit, FDEV0_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      /* Mask the other fields and set the frequency deviation mantissa and
+       * exponent
+       */
+
+      regval &= 0x08;
+      regval |= ((fdeve << 4) | (fdevm));
+
+      /* Write the Frequency deviation register */
+
+      ret = spirit_reg_write(spirit, FDEV0_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_freqdev
+ *
+ * Description:
+ *   Returns the frequency deviation.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Frequency deviation value expressed in Hz.
+ *         This value will be in the range [F_Xo*8/2^18, F_Xo*7680/2^18] Hz.
+ *
+ ******************************************************************************/
+
+uint32_t spirit_radio_get_freqdev(FAR struct spirit_library_s *spirit)
+{
+  uint8_t fdevm;
+  uint8_t fdeve;
+  uint8_t regval;
+
+  /* Read the frequency deviation register for mantissa and exponent */
+
+  (void)spirit_reg_read(spirit, FDEV0_BASE, &regval, 1);
+  fdevm = regval & 0x07;
+  fdeve = (regval & 0xf0) >> 4;
+
+  /* Calculates the frequency deviation and return it */
+
+  return (uint32_t)((float)spirit->xtal_frequency / (((uint32_t) 1) << 18) *
+                    (uint32_t)((8.0 + fdevm) / 2 * (1 << fdeve)));
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_chfilterbw
+ *
+ * Description:
+ *   Sets the channel filter bandwidth.
+ *
+ * Input Parameters:
+ *   spirit    - Reference to a Spirit library state structure instance
+ *   bandwidth - Channel filter bandwidth expressed in Hz. This parameter
+ *               must be in the range [1100 800100].  The API will search the
+ *               closest value according to a fixed table of channel bandwidth
+ *               values, as defined in the datasheet. To verify the settled
+ *               channel bandwidth it is possible to use the
+ *               spirit_radio_get_chfilterbw() API.
+ *
+ * Returned Value:
+ *   Zero (OK) is returned on succes; a negated errnor value is returned on any
+ *   failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_chfilterbw(FAR struct spirit_library_s *spirit,
+                                uint32_t bandwidth)
+{
+  uint8_t bwm;
+  uint8_t bwe;
+  uint8_t regval;
+  int ret;
+
+  /* Search in the channel filter bandwidth table the exponent value */
+
+  if (spirit_radio_isenabled_digdivider(spirit))
+    {
+      DEBUGASSERT(IS_CH_BW(bandwidth, (spirit->xtal_frequency / 2)));
+    }
+  else
+    {
+      DEBUGASSERT(IS_CH_BW(bandwidth, (spirit->xtal_frequency)));
+    }
+
+  /* Calculates the channel bandwidth mantissa and exponent */
+
+  ret = spirit_radio_convert_chbandwidth(spirit, bandwidth, &bwm, &bwe);
+  if (ret >= 0)
+    {
+      regval = (bwm << 4) | (bwe);
+
+      /* Write the Channel filter register */
+
+      ret = spirit_reg_write(spirit, CHFLT_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_chfilterbw
+ *
+ * Description:
+ *   Returns the channel filter bandwidth.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Channel filter bandwidth expressed in Hz.
+ *
+ ******************************************************************************/
+
+uint32_t spirit_radio_get_chfilterbw(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval, bwm, bwe;
+
+  /* Read the channel filter register for mantissa and exponent */
+
+  (void)spirit_reg_read(spirit, CHFLT_BASE, &regval, 1);
+  bwm = (regval & 0xf0) >> 4;
+  bwe = regval & 0x0f;
+
+  /* Read the channel filter bandwidth from the look-up table and return it */
+
+  return (uint32_t)(100.0 * g_vectn_bandwidth[bwm + (bwe * 9)] *
+                    spirit->xtal_frequency / 26e6);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_modulation
+ *
+ * Description:
+ *   Sets the modulation type.
+ *
+ * Input Parameters:
+ *   spirit     - Reference to a Spirit library state structure instance
+ *   modulation - Modulation to set.
+ *
+ * Returned Value:
+ *   Zero (OK) is returned on succes; a negated errnor value is returned on any
+ *   failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_modulation(FAR struct spirit_library_s *spirit,
+                                enum modulation_select_e modulation)
+{
+  uint8_t regval;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_MODULATION_SELECTED(modulation));
+
+  /* Read the modulation register */
+
+  spirit_reg_read(spirit, MOD0_BASE, &regval, 1);
+
+  /* Mask the other fields and set the modulation type */
+
+  regval &= 0x8f;
+  regval |= modulation;
+
+  /* Write the modulation register */
+
+  return spirit_reg_write(spirit, MOD0_BASE, &regval, 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_modulation
+ *
+ * Description:
+ *   Returns the modulation type used.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Settled modulation type.
+ *
+ ******************************************************************************/
+
+enum modulation_select_e
+  spirit_radio_get_modulation(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the modulation register MOD0 */
+
+  (void)spirit_reg_read(spirit, MOD0_BASE, &regval, 1);
+
+  /* Return the modulation type */
+
+  return (enum modulation_select_e)(regval & 0x70);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_enable_cwtxmode
+ *
+ * Description:
+ *   Enables or Disables the Continuous Wave transmit mode.
+ *
+ * Input Parameters:
+ *   spirit   - Reference to a Spirit library state structure instance
+ *   newstate - New state for power ramping. This parameter can be: S_ENABLE
+ *              or S_DISABLE .
+ *
+ * Returned Value:
+ *   Zero (OK) is returned on succes; a negated errnor value is returned on any
+ *   failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_enable_cwtxmode(FAR struct spirit_library_s *spirit,
+                                 enum spirit_functional_state_e newstate)
+{
+  uint8_t regval;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_SPIRIT_FUNCTIONAL_STATE(newstate));
+
+  /* Read the modulation register MOD0 and mask the CW field */
+
+  ret = spirit_reg_read(spirit, MOD0_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      if (newstate == S_ENABLE)
+        {
+          regval |= MOD0_CW;
+        }
+      else
+        {
+          regval &= (~MOD0_CW);
+        }
+
+      /* Write the new value to the MOD0 register */
+
+      ret = spirit_reg_write(spirit, MOD0_BASE, &regval, 1);
+    }
+
+   return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_ookpeackdecay
+ *
+ * Description:
+ *   Sets the OOK Peak Decay.
+ *
+ * Input Parameters:
+ *   spirit   - Reference to a Spirit library state structure instance
+ *   ookdelay - Peak decay control for OOK.
+ *
+ * Returned Value:
+ *   Zero (OK) is returned on succes; a negated errnor value is returned on any
+ *   failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_ookpeackdecay(FAR struct spirit_library_s *spirit,
+                                    enum spirit_ookpeakdelay_e ookdelay)
+{
+  uint8_t regval;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_OOK_PEAK_DECAY(ookdelay));
+
+  /* Read the RSSI_FLT register */
+
+  spirit_reg_read(spirit, RSSI_FLT_BASE, &regval, 1);
+
+  /* Mask the other fields and set OOK Peak Decay */
+
+  regval &= 0xfc;
+  regval |= ookdelay;
+
+  /* Write the RSSI_FLT register to set the new OOK peak dacay value */
+
+  return spirit_reg_write(spirit, RSSI_FLT_BASE, &regval, 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_ookpeackdecay
+ *
+ * Description:
+ *   Returns the OOK Peak Decay.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Ook peak decay value.
+ *
+ ******************************************************************************/
+
+enum spirit_ookpeakdelay_e
+  spirit_radio_get_ookpeackdecay(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the OOK peak decay register RSSI_FLT_BASE */
+
+  (void)spirit_reg_read(spirit, RSSI_FLT_BASE, &regval, 1);
+
+  /* Returns the OOK peak decay */
+
+  return (enum spirit_ookpeakdelay_e)(regval & 0x03);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_convert_power2reg
  *
  * Description:
  *   Returns the PA register value that corresponds to the passed dBm power.
@@ -1431,16 +2180,16 @@ int spirit_radio_convert_chbandwidth(FAR struct spirit_library_s *spirit,
  *
  * Input Parameters:
  *   spirit   - Reference to a Spirit library state structure instance
- *   fbase    Frequency base expressed in Hz.
- *   powerdbm Desired power in dBm.
+ *   fbase    - Frequency base expressed in Hz.
+ *   power - Desired power in dBm.
  *
  * Returned Value:
  *   Register value as byte.
  *
  ******************************************************************************/
 
-uint8_t spirit_radio_dbm2reg(FAR struct spirit_library_s *spirit,
-                             uint32_t fbase, float powerdbm)
+uint8_t spirit_radio_convert_power2reg(FAR struct spirit_library_s *spirit,
+                                       uint32_t fbase, float power)
 {
   float pavalue;
   uint8_t i = 0;
@@ -1468,20 +2217,20 @@ uint8_t spirit_radio_dbm2reg(FAR struct spirit_library_s *spirit,
     }
 
   j = 1;
-  if (powerdbm > 0 &&
+  if (power > 0 &&
       13.0 / g_power_factors[i][2] - g_power_factors[i][3] /
-             g_power_factors[i][2] < powerdbm)
+             g_power_factors[i][2] < power)
     {
       j = 0;
     }
-  else if (powerdbm <= 0 &&
+  else if (power <= 0 &&
            40.0 / g_power_factors[i][2] - g_power_factors[i][3] /
-                  g_power_factors[i][2] > powerdbm)
+                  g_power_factors[i][2] > power)
     {
       j = 2;
     }
 
-  pavalue = g_power_factors[i][2 * j] * powerdbm +
+  pavalue = g_power_factors[i][2 * j] * power +
             g_power_factors[i][2 * j + 1];
 
   if (pavalue < 1)
@@ -1497,27 +2246,215 @@ uint8_t spirit_radio_dbm2reg(FAR struct spirit_library_s *spirit,
 }
 
 /******************************************************************************
- * Name: spirit_radio_set_palevel
+ * Name: spirit_radio_convert_reg2power
  *
  * Description:
- *   Sets a specific PA_LEVEL register, with a value given in dBm.
+ *   Returns the dBm power that corresponds to the value of PA register.
  *
- *   NOTE: This function makes use of the @ref spirit_radio_dbm2reg fcn to
- *   interpolate the power value.
+ *   NOTE: The power interpolation curves used by this function have been
+ *   extracted by measurements done on the divisional evaluation boards.
  *
  * Input Parameters:
- *   spirit   - Reference to a Spirit library state structure instance
- *   ndx      - PA_LEVEL to set. This parameter shall be in the range [0:7].
- *   powerdbm - PA value to write expressed in dBm . Be sure that this values
- *              is in the correct range [-PA_LOWER_LIMIT: PA_UPPER_LIMIT] dBm.
+ *   spirit - Reference to a Spirit library state structure instance
+ *   fbase  - Frequency base expressed in Hz.
+ *   regval - Register value of the PA.
+ *
+ * Returned Value:
+ *   Power in dBm as float.
+ *
+ ******************************************************************************/
+
+float spirit_radio_convert_reg2power(FAR struct spirit_library_s *spirit,
+                                     uint32_t fbase, uint8_t regval)
+{
+  uint8_t i = 0;
+  uint8_t j = 0;
+  float power;
+
+  if (regval == 0 || regval > 90)
+    {
+      return -130.0;
+    }
+
+  if (IS_FREQUENCY_BAND_HIGH(fbase))
+    {
+      i = 0;
+      if (fbase < 900000000)
+        {
+          i = 1; /* 868 */
+        }
+    }
+  else if (IS_FREQUENCY_BAND_MIDDLE(fbase))
+    {
+      i = 2;
+    }
+  else if (IS_FREQUENCY_BAND_LOW(fbase))
+    {
+      i = 3;
+    }
+  else if (IS_FREQUENCY_BAND_VERY_LOW(fbase))
+    {
+      i = 4;
+    }
+
+  j = 1;
+  if (regval < 13)
+    {
+      j = 0;
+    }
+  else if (regval > 40)
+    {
+      j = 2;
+    }
+
+  power = (((float)regval) / g_power_factors[i][2 * j] -
+           g_power_factors[i][2 * j + 1] / g_power_factors[i][2 * j]);
+
+  return power;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_config_patable_dbm
+ *
+ * Description:
+ *   Configures the Power Amplifier Table and registers with value expressed
+ *   in dBm.
+ *
+ * Input Parameters:
+ *   spirit  - Reference to a Spirit library state structure instance
+ *   nlevels - Number of levels to set. This parameter must be in the range
+ *             [0:7].
+ *   width   - Step width expressed in terms of bit period units Tb/8.  This
+ *             parameter must be in the range [1:4].
+ *   load    - The of the possible value of the enum type enum
+ *             pirit_paload_capacitor_e.
+ *
+ *               LOAD_0_PF    No additional PA load capacitor
+ *               LOAD_1_2_PF  1.2pF additional PA load capacitor
+ *               LOAD_2_4_PF  2.4pF additional PA load capacitor
+ *               LOAD_3_6_PF  3.6pF additional PA load capacitor
+ *
+ *   table   - Pointer to an array of PA values in dbm between
+ *             [-PA_LOWER_LIMIT: PA_UPPER_LIMIT] dbm.  The first element must
+ *             be the lower level (PA_LEVEL[0]) value and the last element
+ *             the higher level one (PA_LEVEL[paLevelMaxIndex]).
  *
  * Returned Value:
  *   Zero (OK) on success.  A negated errno value is returned on any failure.
  *
  ******************************************************************************/
 
-int spirit_radio_set_palevel(FAR struct spirit_library_s *spirit,
-                             uint8_t ndx, float powerdbm)
+int spirit_radio_config_patable_dbm(FAR struct spirit_library_s *spirit,
+                                    uint8_t nlevels, uint8_t width,
+                                    enum spirit_paload_capacitor_e load,
+                                    FAR float *table)
+{
+  uint8_t palevel[9];
+  uint8_t regaddr;
+  uint8_t value;
+  uint32_t fbase = spirit_radio_get_basefrequency(spirit);
+  int i;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_PA_MAX_INDEX(nlevels));
+  DEBUGASSERT(IS_PA_STEP_WIDTH(width));
+  DEBUGASSERT(IS_PA_LOAD_CAP(load));
+
+  /* Check the PA level in dBm is in the range and calculate the PA_LEVEL value
+   * to write in the corresponding register using the linearization formula */
+
+  for (i = 0; i <= nlevels; i++)
+    {
+      DEBUGASSERT(IS_PAPOWER_DBM(*table));
+      value = spirit_radio_convert_power2reg(spirit, fbase, *table);
+      palevel[nlevels - i] = value;
+      table++;
+    }
+
+  /* Set the PA_POWER[0] register */
+
+  palevel[nlevels + 1] = load | (width - 1) << 3 | nlevels;
+
+  /* Get the base address */
+
+  regaddr = PA_POWER8_BASE + 7 - nlevels;
+
+  /* Configuresthe PA_POWER registers */
+
+  return spirit_reg_write(spirit, regaddr, palevel, nlevels + 2);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_patable_dbm
+ *
+ * Description:
+ *   Returns the Power Amplifier Table and registers, returning values in dBm.
+ *
+ * Input Parameters:
+ *   spirit  - Reference to a Spirit library state structure instance
+ *   nlevels - Pointer to the number of levels settled. This parameter must
+ *             be in the range [0:7].
+ *   table   - Pointer to an array of 8 elements containing the PA value in dbm.
+ *             The first element will be the PA_LEVEL_0 and the last element
+ *             will be PA_LEVEL_7. Any value higher than PA_UPPER_LIMIT implies
+ (             no output power (output stage is in high impedance).
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_get_patable_dbm(FAR struct spirit_library_s *spirit,
+                                 FAR uint8_t *nlevels, FAR float *table)
+{
+  uint32_t fbase = spirit_radio_get_basefrequency(spirit);
+  uint8_t palevel[9];
+  int ret;
+  int i;
+
+  /* Reads the PA_LEVEL_x registers and the PA_POWER_0 register */
+
+  ret = spirit_reg_read(spirit, PA_POWER8_BASE, palevel, 9);
+  if (ret >= 0)
+    {
+      /* Fill the PAtable */
+
+      for (i = 7; i >= 0; i--)
+        {
+          *table++ = spirit_radio_convert_reg2power(spirit, fbase, palevel[i]);
+        }
+
+      /* Return the settled index */
+
+      *nlevels = palevel[8] & 0x07;
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_palevel_dbm
+ *
+ * Description:
+ *   Sets a specific PA_LEVEL register, with a value given in dBm.
+ *
+ *   NOTE: This function makes use of the spirit_radio_convert_power2reg fcn
+ *   to interpolate the power value.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   ndx    - PA_LEVEL to set. This parameter shall be in the range [0:7].
+ *   power  - PA value to write expressed in dBm . Be sure that this values
+ *            is in the correct range [-PA_LOWER_LIMIT: PA_UPPER_LIMIT] dBm.
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_palevel_dbm(FAR struct spirit_library_s *spirit,
+                                 uint8_t ndx, float power)
 {
   uint32_t basefrequency;
   uint8_t address;
@@ -1526,12 +2463,12 @@ int spirit_radio_set_palevel(FAR struct spirit_library_s *spirit,
   /* Check the parameters */
 
   DEBUGASSERT(IS_PA_MAX_INDEX(ndx));
-  DEBUGASSERT(IS_PAPOWER_DBM(powerdbm));
+  DEBUGASSERT(IS_PAPOWER_DBM(power));
 
   /* Interpolate the power level */
 
   basefrequency = spirit_radio_get_basefrequency(spirit);
-  level         = spirit_radio_dbm2reg(spirit, basefrequency, powerdbm);
+  level         = spirit_radio_convert_power2reg(spirit, basefrequency, power);
 
   /* Sets the base address */
 
@@ -1540,6 +2477,235 @@ int spirit_radio_set_palevel(FAR struct spirit_library_s *spirit,
   /* Configures the PA_LEVEL register */
 
   return spirit_reg_write(spirit, address, &level, 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_palevel_dbm
+ *
+ * Description:
+ *   Returns a specific PA_LEVEL register, returning a value in dBm.
+ *
+ *   NOTE: This function makes use of the @ref spirit_radio_convert_reg2power fcn to
+ *   interpolate the power value.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   ndx    - PA_LEVEL to read. This parameter shall be in the range [0:7]
+ *
+ * Returned Value:
+ *   Settled power level expressed in dBm. A value higher than PA_UPPER_LIMIT
+ *   dBm implies no output power (output stage is in high impedance).
+ *
+ ******************************************************************************/
+
+float spirit_radio_get_palevel_dbm(FAR struct spirit_library_s *spirit,
+                                   uint8_t ndx)
+{
+  uint8_t regaddr;
+  uint8_t value;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_PA_MAX_INDEX(ndx));
+
+  /* Sets the base address */
+
+  regaddr = PA_POWER8_BASE + 7 - ndx;
+
+  /* Reads the PA_LEVEL[ndx] register */
+
+  (void)spirit_reg_read(spirit, regaddr, &value, 1);
+
+  return spirit_radio_convert_reg2power(spirit,
+                                        spirit_radio_get_basefrequency(spirit),
+                                        value);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_config_patable
+ *
+ * Description:
+ *   Configures the Power Amplifier Table and registers.
+ *
+ * Input Parameters:
+ *   spirit  - Reference to a Spirit library state structure instance
+ *   nlevels - Number of levels to set. This parameter must be in the range
+ *             [0:7].
+ *   width   - Step width expressed in terms of bit period units Tb/8.  This
+ *             parameter must be in the range [1:4].
+ *   load    - One of the possible value of the enum type enum
+ *             spirit_paload_capacitor_e.
+ *
+ *               LOAD_0_PF    No additional PA load capacitor
+ *               LOAD_1_2_PF  1.2pF additional PA load capacitor
+ *               LOAD_2_4_PF  2.4pF additional PA load capacitor
+ *               LOAD_3_6_PF  3.6pF additional PA load capacitor
+ *
+ *   table   - Pointer to an array of PA values in the range [0: 90], where
+ *             0 implies no output power, 1 will be the maximum level and 90
+ *             the minimum one. The first element must be the lower level
+ *             (PA_LEVEL[0]) value and the last element the higher level one
+ *             (PA_LEVEL[paLevelMaxIndex]).
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_config_patable(FAR struct spirit_library_s *spirit,
+                                uint8_t nlevels, uint8_t width,
+                                enum spirit_paload_capacitor_e load,
+                                FAR uint8_t *table)
+{
+  uint8_t palevel[9];
+  uint8_t regaddr;
+  int i;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_PA_MAX_INDEX(nlevels));
+  DEBUGASSERT(IS_PA_STEP_WIDTH(width));
+  DEBUGASSERT(IS_PA_LOAD_CAP(load));
+
+  /* Check the PA levels are in the range */
+
+  for (i = 0; i <= nlevels; i++)
+    {
+      DEBUGASSERT(IS_PAPOWER(*table));
+      palevel[nlevels - i] = *table;
+      table++;
+    }
+
+  /* Sets the PA_POWER[0] register */
+
+  palevel[nlevels + 1] = load | ((width - 1) << 3) | nlevels;
+
+  /* Sets the base address */
+
+  regaddr = PA_POWER8_BASE + 7 - nlevels;
+
+  /* Configures the PA_POWER registers */
+
+  return spirit_reg_write(spirit, regaddr, palevel, nlevels + 2);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_patable
+ *
+ * Description:
+ *   Returns the Power Amplifier Table and registers.
+ *
+ * Input Parameters:
+ *   spirit  - Reference to a Spirit library state structure instance
+ *   nlevels - Pointer to the number of levels settled.  This parameter must
+ *             be in the range [0:7].
+ *   table   - Pointer to an array of 8 elements containing the PA value. The
+ *             first element will be the PA_LEVEL_0 and the last element will
+ *             be PA_LEVEL_7. Any value equals to 0 implies that level has no
+ *             output power (output stage is in high impedance).
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_get_patable(FAR struct spirit_library_s *spirit,
+                             FAR uint8_t *nlevels, FAR uint8_t *table)
+{
+  uint8_t palevels[9];
+  int ret;
+  int i;
+
+  /* Reads the PA_LEVEL_x registers and the PA_POWER_0 register */
+
+  ret = spirit_reg_read(spirit, PA_POWER8_BASE, palevels, 9);
+  if (ret >= 0)
+    {
+      /* Fill the PAtable */
+
+      for (i = 7; i >= 0; i--)
+        {
+          *table++ = palevels[i];
+        }
+
+      /* Return the settled index */
+
+      *nlevels = palevels[8] & 0x07;
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_palevel
+ *
+ * Description:
+ *   Sets a specific PA_LEVEL register.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   ndx    - PA_LEVEL to set. This parameter shall be in the range [0:7].
+ *   power  - PA value to write in the register. Be sure that this values is
+ *            in the correct range [0 : 90].
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_palevel(FAR struct spirit_library_s *spirit,
+                             uint8_t ndx, uint8_t power)
+{
+  uint8_t regaddr;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_PA_MAX_INDEX(ndx));
+  DEBUGASSERT(IS_PAPOWER(power));
+
+  /* Sets the base address */
+
+  regaddr = PA_POWER8_BASE + 7 - ndx;
+
+  /* Configures the PA_LEVEL register */
+
+  return spirit_reg_write(spirit, regaddr, &power, 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_palevel
+ *
+ * Description:
+ *   Returns a specific PA_LEVEL register.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   ndx    - PA_LEVEL to read. This parameter shall be in the range [0:7].
+ *
+ * Returned Value:
+ *   PA_LEVEL value. A value equal to zero
+ *         implies no output power (output stage is in high impedance).
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_palevel(FAR struct spirit_library_s *spirit,
+                                 uint8_t ndx)
+{
+  uint8_t regaddr;
+  uint8_t regval;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_PA_MAX_INDEX(ndx));
+
+  /* Sets the base address */
+
+  regaddr = PA_POWER8_BASE + 7 - ndx;
+
+  /* Reads the PA_LEVEL[ndx] register and return the value */
+
+  (void)spirit_reg_read(spirit, regaddr, &regval, 1);
+  return regval;
 }
 
 /******************************************************************************
@@ -1571,7 +2737,7 @@ int spirit_radio_set_outputload(FAR struct spirit_library_s *spirit,
 
   DEBUGASSERT(IS_PA_LOAD_CAP(load));
 
-  /* Reads the PA_POWER_0 register */
+  /* Read the PA_POWER_0 register */
 
   ret = spirit_reg_read(spirit, PA_POWER0_BASE, &regval, 1);
   if (ret >= 0)
@@ -1613,13 +2779,13 @@ enum spirit_paload_capacitor_e
 {
   uint8_t regval;
 
-  /* Reads the PA_POWER_0 register */
+  /* Read the PA_POWER_0 register */
 
   (void)spirit_reg_read(spirit, PA_POWER0_BASE, &regval, 1);
 
   /* Mask the CWC[1:0] field and return the value */
 
-  return (enum spirit_paload_capacitor_e) (regval & 0xc0);
+  return (enum spirit_paload_capacitor_e)(regval & 0xc0);
 }
 
 /******************************************************************************
@@ -1648,7 +2814,7 @@ int spirit_radio_set_palevel_maxindex(FAR struct spirit_library_s *spirit,
 
   DEBUGASSERT(IS_PA_MAX_INDEX(ndx));
 
-  /* Reads the PA_POWER_0 register */
+  /* Read the PA_POWER_0 register */
 
   ret = spirit_reg_read(spirit, PA_POWER0_BASE, &regval, 1);
   if (ret >= 0)
@@ -1661,6 +2827,232 @@ int spirit_radio_set_palevel_maxindex(FAR struct spirit_library_s *spirit,
       /* Configures the PA_POWER_0 register */
 
       ret = spirit_reg_write(spirit, PA_POWER0_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_palevel_maxindex
+ *
+ * Description:
+ *   Returns the actual PA_LEVEL_MAX_INDEX.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Actual PA_LEVEL_MAX_INDEX. This value will be in the range [0:7].
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_palevel_maxindex(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the PA_POWER_0 register */
+
+  (void)spirit_reg_read(spirit, PA_POWER0_BASE, &regval, 1);
+
+  /* Mask the PA_LEVEL_MAX_INDEX[1:0] field and return the value */
+
+  return (regval & 0x07);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_pastep_width
+ *
+ * Description:
+ *   Sets a specific PA_RAMP_STEP_WIDTH.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   width  - Step width expressed in terms of bit period units Tb/8.  This
+ *            value must be in the range [1:4].
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_pastep_width(FAR struct spirit_library_s *spirit,
+                                  uint8_t width)
+{
+  uint8_t regval;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_PA_STEP_WIDTH(width));
+
+  /* Read the PA_POWER_0 register */
+
+  ret = spirit_reg_read(spirit, PA_POWER0_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      /* Mask the PA_RAMP_STEP_WIDTH[1:0] field and write the new value */
+
+      regval &= 0xe7;
+      regval |= (width - 1) << 3;
+
+      /* Configures the PA_POWER_0 register */
+
+      ret = spirit_reg_write(spirit, PA_POWER0_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_pastep_width
+ *
+ * Description:
+ *   Returns the actual PA_RAMP_STEP_WIDTH.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Step width value expressed in terms of bit period units Tb/8.  This
+ *   value will be in the range [1:4].
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_pastep_width(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the PA_POWER_0 register */
+
+  (void)spirit_reg_read(spirit, PA_POWER0_BASE, &regval, 1);
+
+  /* Mask the PA_RAMP_STEP_WIDTH[1:0] field and return the value */
+
+  regval &= 0x18;
+  return ((regval >> 3) + 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_enable_paramp
+ *
+ * Description:
+ *   Enables or Disables the Power Ramping.
+ *
+ * Input Parameters:
+ *   spirit   - Reference to a Spirit library state structure instance
+ *   newstate - New state for power ramping.  This value can be: S_ENABLE
+ *              or S_DISABLE.
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_enable_paramp(FAR struct spirit_library_s *spirit,
+                               enum spirit_functional_state_e newstate)
+{
+  uint8_t regval = 0;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_SPIRIT_FUNCTIONAL_STATE(newstate));
+
+  /* Read the PA_POWER_0 register and configure the PA_RAMP_ENABLE field */
+
+  ret = spirit_reg_read(spirit, PA_POWER0_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      if (newstate == S_ENABLE)
+        {
+          regval |= PA_POWER0_PA_RAMP_MASK;
+        }
+      else
+        {
+          regval &= (~PA_POWER0_PA_RAMP_MASK);
+        }
+
+      /* Set the PA_POWER_0 register */
+
+      ret = spirit_reg_write(spirit, PA_POWER0_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_isenabled_paramp
+ *
+ * Description:
+ *   Returns the state of the Power Ramping enable bit.
+ *
+ * Input Parameters:
+ *   spirit   - Reference to a Spirit library state structure instance
+ *   newstate - New state for power ramping. This value can be: S_ENABLE
+ *              or S_DISABLE.
+ *
+ * Returned Value:
+ *   Power Ramping enable state.
+ *
+ ******************************************************************************/
+
+enum spirit_functional_state_e
+  spirit_radio_isenabled_paramp(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the PA_POWER_0 register and configure the PA_RAMP_ENABLE field */
+
+  (void)spirit_reg_read(spirit, PA_POWER0_BASE, &regval, 1);
+
+  /* Mask and return data */
+
+  return (enum spirit_functional_state_e)((regval >> 5) & 0x01);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_enable_afc
+ *
+ * Description:
+ *   Enables or Disables the AFC.
+ *
+ * Input Parameters:
+ *   spirit   - Reference to a Spirit library state structure instance
+ *   newstate - New state for AFC. This value can be: S_ENABLE or
+ *              S_DISABLE.
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_enable_afc(FAR struct spirit_library_s *spirit,
+                            enum spirit_functional_state_e newstate)
+{
+  uint8_t regval = 0;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_SPIRIT_FUNCTIONAL_STATE(newstate));
+
+  /* Read the AFC_2 register and configure the AFC Enabled field */
+
+  ret = spirit_reg_read(spirit, AFC2_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      if (newstate == S_ENABLE)
+        {
+          regval |= AFC2_AFC_MASK;
+        }
+      else
+        {
+          regval &= (~AFC2_AFC_MASK);
+        }
+
+      /* Set the AFC_2 register */
+
+      ret = spirit_reg_write(spirit, AFC2_BASE, &regval, 1);
     }
 
   return ret;
@@ -1692,7 +3084,7 @@ int spirit_radio_afcfreezeonsync(FAR struct spirit_library_s *spirit,
 
   DEBUGASSERT(IS_SPIRIT_FUNCTIONAL_STATE(newstate));
 
-  /* Reads the AFC_2 register and configure the AFC Freeze on Sync field */
+  /* Read the AFC_2 register and configure the AFC Freeze on Sync field */
 
   ret = spirit_reg_read(spirit, AFC2_BASE, &regval, 1);
   if (ret >= 0)
@@ -1712,6 +3104,1402 @@ int spirit_radio_afcfreezeonsync(FAR struct spirit_library_s *spirit,
     }
 
   return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_afcmode
+ *
+ * Description:
+ *   Sets the AFC working mode.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   mode   - The AFC mode. This value can be one of the values defined in
+ *            enum spirit_afcmode_e:
+ *
+ *              AFC_SLICER_CORRECTION  AFC loop closed on slicer
+ *              AFC_2ND_IF_CORRECTION  AFC loop closed on 2nd conversion stage
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_afcmode(FAR struct spirit_library_s *spirit,
+                             enum spirit_afcmode_e mode)
+{
+  uint8_t regval = 0;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_AFC_MODE(mode));
+
+  /* Read the AFC_2 register and configure the AFC Mode field */
+
+  ret = spirit_reg_read(spirit, AFC2_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      if (mode == AFC_2ND_IF_CORRECTION)
+        {
+          regval |= AFC_2ND_IF_CORRECTION;
+        }
+      else
+        {
+          regval &= (~AFC_2ND_IF_CORRECTION);
+        }
+
+      /* Set the AFC_2 register */
+
+      ret = spirit_reg_write(spirit, AFC2_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_afcmode
+ *
+ * Description:
+ *   Returns the AFC working mode.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Settled AFC mode. This value will be one of the values defined in
+ *   enum spirit_afcmode_e:
+ *
+ *     AFC_SLICER_CORRECTION  AFC loop closed on slicer
+ *     AFC_2ND_IF_CORRECTION  AFC loop closed on 2nd conversion stage
+ *
+ ******************************************************************************/
+
+enum spirit_afcmode_e
+  spirit_radio_get_afcmode(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the AFC_2 register */
+
+  (void)spirit_reg_read(spirit, AFC2_BASE, &regval, 1);
+
+  /* Mask the AFC Mode field and returns the value */
+
+  return (enum spirit_afcmode_e)(regval & 0x20);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_afcpdleakage
+ *
+ * Description:
+ *   Sets the AFC peak detector leakage.
+ *
+ * Input Parameters:
+ *   spirit  - Reference to a Spirit library state structure instance
+ *   leakage - The peak detector leakage. This value must be in the
+ *             range: [0:31].
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_afcpdleakage(FAR struct spirit_library_s *spirit,
+                                  uint8_t leakage)
+{
+  uint8_t regval = 0;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_AFC_PD_LEAKAGE(leakage));
+
+  /* Read the AFC_2 register and configure the AFC PD leakage field */
+
+  ret = spirit_reg_read(spirit, AFC2_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      regval &= 0xe0;
+      regval |= leakage;
+
+      /* Set the AFC_2 register */
+
+      ret = spirit_reg_write(spirit, AFC2_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_afcpdleakage
+ *
+ * Description:
+ *   Returns the AFC peak detector leakage.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Peak detector leakage value. This value will be in the range: [0:31].
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_afcpdleakage(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the AFC_2 register */
+
+  (void)spirit_reg_read(spirit, AFC2_BASE, &regval, 1);
+
+  /* Mask the AFC PD leakage field and return the value */
+
+  return (regval & 0x1f);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_afcfastperiod
+ *
+ * Description:
+ *   Sets the length of the AFC fast period expressed as number of samples.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   length - Length of the fast period in number of samples.
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_afcfastperiod(FAR struct spirit_library_s *spirit,
+                                   uint8_t length)
+{
+  /* Set the AFC_1 register */
+
+  return spirit_reg_write(spirit, AFC1_BASE, &length, 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_afcfastperiod
+ *
+ * Description:
+ *   Returns the AFC fast period expressed as number of samples.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Length of the fast period in number of samples.
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_afcfastperiod(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the AFC 1 register and return the value */
+
+  (void)spirit_reg_read(spirit, AFC1_BASE, &regval, 1);
+
+  return regval;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_afcfastgain
+ *
+ * Description:
+ *   Sets the AFC loop gain in fast mode.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   gain   - AFC loop gain in fast mode. This value must be in the range:
+ *            [0:15].
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_afcfastgain(FAR struct spirit_library_s *spirit,
+                                 uint8_t gain)
+{
+  uint8_t regval = 0;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_AFC_FAST_GAIN(gain));
+
+  /* Read the AFC_0 register and configure the AFC Fast Gain field */
+
+  ret = spirit_reg_read(spirit, AFC0_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      regval &= 0x0f;
+      regval |= gain << 4;
+
+      /* Set the AFC_0 register */
+
+      ret = spirit_reg_write(spirit, AFC0_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_afcfastgain
+ *
+ * Description:
+ *   Returns the AFC loop gain in fast mode.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   uint8_t AFC loop gain in fast mode. This value will be in the range:
+ *         [0:15].
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_afcfastgain(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the AFC_0 register, mask the AFC Fast Gain field and return the
+   * value.
+   */
+
+  (void)spirit_reg_read(spirit, AFC0_BASE, &regval, 1);
+
+  return ((regval & 0xf0) >> 4);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_afclowgain
+ *
+ * Description:
+ *   Sets the AFC loop gain in slow mode.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   gain   - AFC loop gain in slow mode. This value must be in the range:
+ *            [0:15].
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_afclowgain(FAR struct spirit_library_s *spirit,
+                                uint8_t gain)
+{
+  uint8_t regval = 0;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_AFC_SLOW_GAIN(gain));
+
+  /* Read the AFC_0 register and configure the AFC Slow Gain field */
+
+  ret = spirit_reg_read(spirit, AFC0_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      regval &= 0xf0;
+      regval |= gain;
+
+      /* Set the AFC_0 register */
+
+      ret = spirit_reg_write(spirit, AFC0_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_afclowgain
+ *
+ * Description:
+ *   Returns the AFC loop gain in slow mode.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   AFC loop gain in slow mode. This value will be in the range: [0:15].
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_afclowgain(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the AFC_0 register, mask the AFC Slow Gain field and return the
+   * value */
+
+  (void)spirit_reg_read(spirit, AFC0_BASE, &regval, 1);
+
+  return (regval & 0x0f);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_afccorrection
+ *
+ * Description:
+ *   Returns the AFC correction from the corresponding register.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   AFC correction, read from the corresponding register.  This value
+ *   will be in the range [-128:127].
+ *
+ ******************************************************************************/
+
+int8_t spirit_radio_get_afccorrection(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the AFC_CORR register, cast the read value as signed char and return
+   * it.
+   */
+
+  (void)spirit_reg_read(spirit, AFC_CORR_BASE, &regval, 1);
+
+  return (int8_t)regval;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_afccorrection_hz
+ *
+ * Description:
+ *   Returns the AFC correction expressed in Hz.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   AFC correction expressed in Hz according to the following formula:
+ *
+ *     Fafc[Hz]= (Fdig/(12*2^10))*AFC_CORR
+ *
+ *   where  AFC_CORR is the value read in the AFC_CORR register
+ *
+ ******************************************************************************/
+
+int32_t spirit_radio_get_afccorrection_hz(FAR struct spirit_library_s *spirit)
+{
+  int8_t correction;
+  uint32_t xtal = spirit->xtal_frequency;
+
+  /* Read the AFC correction register */
+
+  correction = spirit_radio_get_afccorrection(spirit);
+
+  if (xtal > DOUBLE_XTAL_THR)
+    {
+      xtal /= 2;
+    }
+
+  /* Calculates and return the Frequency Correction */
+
+  return (int32_t)(xtal / (12 * pow(2, 10)) * correction);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_enable_agc
+ *
+ * Description:
+ *   Enables or Disables the AGC.
+ *
+ * Input Parameters:
+ *   spirit   - Reference to a Spirit library state structure instance
+ *   newstate - New state for AGC.
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_enable_agc(FAR struct spirit_library_s *spirit,
+                            enum spirit_functional_state_e newstate)
+{
+  uint8_t regval = 0;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_SPIRIT_FUNCTIONAL_STATE(newstate));
+
+  /* Read the AGCCTRL_0 register and configure the AGC Enabled field */
+
+  ret = spirit_reg_read(spirit, AGCCTRL0_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      if (newstate == S_ENABLE)
+        {
+          regval |= AGCCTRL0_AGC_MASK;
+        }
+      else
+        {
+          regval &= (~AGCCTRL0_AGC_MASK);
+        }
+
+      /* Set the AGCCTRL_0 register */
+
+      ret = spirit_reg_write(spirit, AGCCTRL0_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_agcmode
+ *
+ * Description:
+ *   Sets the AGC working mode.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   mode   - The AGC mode. This value can be one of the values defined in
+ *            enum spirit_agcmode_e:
+ *
+ *              AGC_LINEAR_MODE  AGC works in linear mode
+ *              AGC_BINARY_MODE  AGC works in binary mode
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_agcmode(FAR struct spirit_library_s *spirit,
+                             enum spirit_agcmode_e mode)
+{
+  uint8_t regval = 0;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_AGC_MODE(mode));
+
+  /* Read the AGCCTRL_0 register and configure the AGC Mode field */
+
+  ret = spirit_reg_read(spirit, AGCCTRL0_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      if (mode == AGC_BINARY_MODE)
+        {
+          regval |= AGC_BINARY_MODE;
+        }
+      else
+        {
+          regval &= (~AGC_BINARY_MODE);
+        }
+
+      /* Set the AGCCTRL_0 register */
+
+      ret = spirit_reg_write(spirit, AGCCTRL0_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_agcmode
+ *
+ * Description:
+ *   Returns the AGC working mode.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Settled AGC mode.  This value can be one of the values defined in
+ *   enum spirit_agcmode_e:
+ *
+ *     AGC_LINEAR_MODE  AGC works in linear mode
+ *     AGC_BINARY_MODE  AGC works in binary mode
+ *
+ ******************************************************************************/
+
+enum spirit_agcmode_e
+  spirit_radio_get_agcmode(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the AGCCTRL_0 register, mask the AGC Mode field and return the value */
+
+  (void)spirit_reg_read(spirit, AGCCTRL0_BASE, &regval, 1);
+
+  return (enum spirit_agcmode_e)(regval & 0x40);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_enable_agcfreeze_steady
+ *
+ * Description:
+ *   Enables or Disables the AGC freeze on steady state.
+ *
+ * Input Parameters:
+ *   spirit   - Reference to a Spirit library state structure instance
+ *   newstate - New state for AGC freeze on steady state.
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_enable_agcfreeze_steady(FAR struct spirit_library_s *spirit,
+                                         enum spirit_functional_state_e newstate)
+{
+  uint8_t regval = 0;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_SPIRIT_FUNCTIONAL_STATE(newstate));
+
+  /* Read the AGCCTRL_2 register and configure the AGC Freeze On Steady field */
+
+  ret = spirit_reg_read(spirit, AGCCTRL2_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      if (newstate == S_ENABLE)
+        {
+          regval |= AGCCTRL2_FREEZE_ON_STEADY_MASK;
+        }
+      else
+        {
+          regval &= (~AGCCTRL2_FREEZE_ON_STEADY_MASK);
+        }
+
+      /* Set the AGCCTRL_2 register */
+
+      ret = spirit_reg_write(spirit, AGCCTRL2_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_enable_agcfreeze_sync
+ *
+ * Description:
+ *   Enable or Disable the AGC freeze on sync detection.
+ *
+ * Input Parameters:
+ *   spirit   - Reference to a Spirit library state structure instance
+ *   newstate - New state for AGC freeze on sync detection.
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_enable_agcfreeze_sync(FAR struct spirit_library_s *spirit,
+                                       enum spirit_functional_state_e newstate)
+{
+  uint8_t regval = 0;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_SPIRIT_FUNCTIONAL_STATE(newstate));
+
+  /* Read the AGCCTRL_2 register and configure the AGC Freeze On Sync field */
+
+  ret = spirit_reg_read(spirit, AGCCTRL2_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      if (newstate == S_ENABLE)
+        {
+          regval |= AGCCTRL2_FREEZE_ON_SYNC_MASK;
+        }
+      else
+        {
+          regval &= (~AGCCTRL2_FREEZE_ON_SYNC_MASK);
+        }
+
+      /* Set the AGCCTRL_2 register */
+
+      ret = spirit_reg_write(spirit, AGCCTRL2_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_enable_agcfreeze_maxatten
+ *
+ * Description:
+ *   Enable or Disable the AGC to start with max attenuation.
+ *
+ * Input Parameters:
+ *   spirit   - Reference to a Spirit library state structure instance
+ *   newstate - New state for AGC start with max attenuation mode.
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_enable_agcfreeze_maxatten(FAR struct spirit_library_s *spirit,
+                                           enum spirit_functional_state_e newstate)
+{
+  uint8_t regval = 0;
+  int ret;
+
+  /* Check the parameters */
+
+  DEBUGASSERT(IS_SPIRIT_FUNCTIONAL_STATE(newstate));
+
+  /* Read the AGCCTRL_2 register and configure the AGC Start Max Attenuation
+   * field */
+
+  ret = spirit_reg_read(spirit, AGCCTRL2_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      if (newstate == S_ENABLE)
+        {
+          regval |= AGCCTRL2_START_MAX_ATTENUATION_MASK;
+        }
+      else
+        {
+          regval &= (~AGCCTRL2_START_MAX_ATTENUATION_MASK);
+        }
+
+      /* Set the AGCCTRL_2 register */
+
+      ret = spirit_reg_write(spirit, AGCCTRL2_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_agcmeasure_us
+ *
+ * Description:
+ *   Sets the AGC measure time.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   time   - AGC measure time expressed in us. This value must be in the
+ *            range [0, 393216/F_Xo].
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_agcmeasure_us(FAR struct spirit_library_s *spirit,
+                                   uint16_t time)
+{
+  uint8_t regval;
+  uint8_t measure;
+  int ret;
+
+  /* Check the parameter */
+
+  DEBUGASSERT(IS_AGC_MEASURE_TIME_US(time, spirit->xtal_frequency));
+
+  /* Read the AGCCTRL_2 register */
+
+  ret = spirit_reg_read(spirit, AGCCTRL2_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      /* Calculates the measure time value to write in the register */
+
+      measure = (uint8_t)
+        lroundf(log2((float)time / 1e6 * spirit->xtal_frequency / 12));
+
+      if (measure > 15)
+        {
+          measure = 15;
+        }
+
+      /* Mask the MEAS_TIME field and write the new value */
+
+      regval &= 0xf0;
+      regval |= measure;
+
+      /* Set the AGCCTRL_2 register */
+
+      ret = spirit_reg_write(spirit, AGCCTRL2_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_agcmeasure_us
+ *
+ * Description:
+ *   Returns the AGC measure time in microseconds.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   AGC measure time expressed in microseconds. This value will be in
+ *   the range [0, 393216/Fxo].
+ *
+ ******************************************************************************/
+
+uint16_t spirit_radio_get_agcmeasure_us(FAR struct spirit_library_s *spirit)
+{
+  uint8_t measure;
+
+  /* Read the AGCCTRL_2 register */
+
+  (void)spirit_reg_read(spirit, AGCCTRL2_BASE, &measure, 1);
+
+  /* Mask the MEAS_TIME field */
+
+  measure &= 0x0f;
+
+  /* Calculates the measure time value to write in the register */
+
+  return (uint16_t)((12.0 / spirit->xtal_frequency) * (float)pow(2, measure) * 1e6);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_agcmeasure
+ *
+ * Description:
+ *   Sets the AGC measure time.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   time   - AGC measure time to write in the MEAS_TIME field of AGCCTRL_2
+ *            register.  This value must be in the range [0:15].
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_agcmeasure(FAR struct spirit_library_s *spirit,
+                                uint8_t time)
+{
+  uint8_t regval;
+  int ret;
+
+  /* Check the parameter */
+
+  DEBUGASSERT(IS_AGC_MEASURE_TIME(time));
+
+  /* Read the AGCCTRL_2 register */
+
+  ret = spirit_reg_read(spirit, AGCCTRL2_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      /* Mask the MEAS_TIME field and write the new value */
+
+      regval &= 0xf0;
+      regval |= time;
+
+      /* Set the AGCCTRL_2 register */
+
+      ret = spirit_reg_write(spirit, AGCCTRL2_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_agcmeasure
+ *
+ * Description:
+ *   Returns the AGC measure time.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   AGC measure time read from the MEAS_TIME field of AGCCTRL_2 register.
+ *   This value will be in the range [0:15].
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_agcmeasure(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the AGCCTRL_2 register, mask the MEAS_TIME field and return the
+   * value.
+   */
+
+  (void)spirit_reg_read(spirit, AGCCTRL2_BASE, &regval, 1);
+
+  return (regval & 0x0f);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_agcholdtime_us
+ *
+ * Description:
+ *   Sets the AGC hold time.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   time   - AGC hold time expressed in us. This value must be in the
+ *            range [0, 756/F_Xo].
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_agcholdtime_us(FAR struct spirit_library_s *spirit,
+                                    uint8_t time)
+{
+  uint8_t regval, hold;
+
+  /* Check the parameter */
+
+  DEBUGASSERT(IS_AGC_HOLD_TIME_US(time, spirit->xtal_frequency));
+
+  /* Read the AGCCTRL_0 register */
+
+  spirit_reg_read(spirit, AGCCTRL0_BASE, &regval, 1);
+
+  /* Calculates the hold time value to write in the register */
+
+  hold = (uint8_t) lroundf(((float)time / 1e6 * spirit->xtal_frequency) / 12);
+  (hold > 63) ? (hold = 63) : (hold);
+
+  /* Mask the HOLD_TIME field and write the new value */
+
+  regval &= 0xc0;
+  regval |= hold;
+
+  /* Set the AGCCTRL_0 register */
+
+  return spirit_reg_write(spirit, AGCCTRL0_BASE, &regval, 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_agcholdtime_us
+ *
+ * Description:
+ *   Returns the AGC hold time.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   AGC hold time expressed in us. This value will be in the range:
+ *   [0, 756/F_Xo].
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_agcholdtime_us(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the AGCCTRL_0 register */
+
+  (void)spirit_reg_read(spirit, AGCCTRL0_BASE, &regval, 1);
+
+  /* Mask the HOLD_TIME field */
+
+  regval &= 0x3f;
+
+  /* Calculates the hold time value and return it */
+
+  return (uint8_t) lroundf((12.0 / spirit->xtal_frequency) * (regval * 1e6));
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_agcholdtime
+ *
+ * Description:
+ *   Sets the AGC hold time.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   time   - AGC hold time to write in the HOLD_TIME field of AGCCTRL_0
+ *            register.  This value must be in the range [0:63].
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_agcholdtime(FAR struct spirit_library_s *spirit,
+                                 uint8_t time)
+{
+  uint8_t regval;
+  int ret;
+
+  /* Check the parameter */
+
+  DEBUGASSERT(IS_AGC_HOLD_TIME(time));
+
+  /* Read the AGCCTRL_0 register */
+
+  ret = spirit_reg_read(spirit, AGCCTRL0_BASE, &regval, 1);
+  if (ret >= 0)
+    {
+      /* Mask the HOLD_TIME field and write the new value */
+
+      regval &= 0xc0;
+      regval |= time;
+
+      /* Set the AGCCTRL_0 register */
+
+      ret = spirit_reg_write(spirit, AGCCTRL0_BASE, &regval, 1);
+    }
+
+  return ret;
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_agcholdtime
+ *
+ * Description:
+ *   Returns the AGC hold time.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   AGC hold time read from the HOLD_TIME field of AGCCTRL_0 register.  This
+ *   value will be in the range [0:63].
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_agcholdtime(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the AGCCTRL_0 register, mask the MEAS_TIME field and return the
+   * value.
+   */
+
+  (void)spirit_reg_read(spirit, AGCCTRL0_BASE, &regval, 1);
+
+  return (regval & 0x3f);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_agchighthres
+ *
+ * Description:
+ *   Sets the AGC high threshold.
+ *
+ * Input Parameters:
+ *   spirit    - Reference to a Spirit library state structure instance
+ *   highthres - AGC high threshold to write in the THRESHOLD_HIGH field of
+ *               AGCCTRL_1 register.  This value must be in the range
+ *               [0:15].
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_agchighthres(FAR struct spirit_library_s *spirit,
+                                  uint8_t highthres)
+{
+  uint8_t regval;
+
+  /* Check the parameter */
+
+  DEBUGASSERT(IS_AGC_THRESHOLD(highthres));
+
+  /* Read the AGCCTRL_1 register */
+
+  spirit_reg_read(spirit, AGCCTRL1_BASE, &regval, 1);
+
+  /* Mask the THRESHOLD_HIGH field and write the new value */
+
+  regval &= 0x0f;
+  regval |= highthres << 4;
+
+  /* Set the AGCCTRL_1 register */
+
+  return spirit_reg_write(spirit, AGCCTRL1_BASE, &regval, 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_agchighthres
+ *
+ * Description:
+ *   Returns the AGC high threshold.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   AGC high threshold read from the THRESHOLD_HIGH field of AGCCTRL_1
+ *   register.  This value will be in the range [0:15].
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_agchighthres(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the AGCCTRL_1 register, mask the THRESHOLD_HIGH field and return the
+   * value */
+
+  (void)spirit_reg_read(spirit, AGCCTRL1_BASE, &regval, 1);
+
+  return ((regval & 0xf0) >> 4);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_agclowthres
+ *
+ * Description:
+ *   Sets the AGC low threshold.
+ *
+ * Input Parameters:
+ *   spirit   - Reference to a Spirit library state structure instance
+ *   lowthres - AGC low threshold to write in the THRESHOLD_LOW field of
+ *              AGCCTRL_1 register. This value must be in the range
+ *              0:15].
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_agclowthres(FAR struct spirit_library_s *spirit,
+                                 uint8_t lowthres)
+{
+  uint8_t regval;
+
+  /* Check the parameter */
+
+  DEBUGASSERT(IS_AGC_THRESHOLD(lowthres));
+
+  /* Read the AGCCTRL_1 register */
+
+  spirit_reg_read(spirit, AGCCTRL1_BASE, &regval, 1);
+
+  /* Mask the THRESHOLD_LOW field and write the new value */
+
+  regval &= 0xf0;
+  regval |= lowthres;
+
+  /* Set the AGCCTRL_1 register */
+
+  return spirit_reg_write(spirit, AGCCTRL1_BASE, &regval, 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_agclowthres
+ *
+ * Description:
+ *   Returns the AGC low threshold.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   AGC low threshold read from the THRESHOLD_LOW field of AGCCTRL_1 register.
+ *   This value will be in the range [0:15].
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_agclowthres(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the AGCCTRL_1 register, mask the THRESHOLD_LOW field and return the
+   * value */
+
+  (void)spirit_reg_read(spirit, AGCCTRL1_BASE, &regval, 1);
+
+  return (regval & 0x0f);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_clkrecmode
+ *
+ * Description:
+ *   Sets the clock recovery algorithm.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   mode   - The Clock Recovery mode. This value can be one of the values
+ *            defined in enum spirit_clkrecmode_e :
+ *
+ *              CLK_REC_PLL  PLL alogrithm for clock recovery
+ *              CLK_REC_DLL  DLL alogrithm for clock recovery
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_clkrecmode(FAR struct spirit_library_s *spirit,
+                                enum spirit_clkrecmode_e mode)
+{
+  uint8_t regval;
+
+  /* Check the parameter */
+
+  DEBUGASSERT(IS_CLK_REC_MODE(mode));
+
+  /* Read the FDEV_0 register */
+
+  spirit_reg_read(spirit, FDEV0_BASE, &regval, 1);
+
+  /* Mask the CLOCK_REC_ALGO_SEL field and write the new value */
+
+  regval &= 0xf7;
+  regval |= (uint8_t) mode;
+
+  /* Set the FDEV_0 register */
+
+  return spirit_reg_write(spirit, FDEV0_BASE, &regval, 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_clkrecmode
+ *
+ * Description:
+ *   Returns the Clock Recovery working mode.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Clock Recovery mode. This value can be one of the values defined in
+ *   enum spirit_clkrecmode_e:
+ *
+ *     CLK_REC_PLL  PLL alogrithm for clock recovery
+ *     CLK_REC_DLL  DLL alogrithm for clock recovery
+ *
+ ******************************************************************************/
+
+enum spirit_clkrecmode_e
+  spirit_radio_get_clkrecmode(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the FDEV_0 register, mask the CLOCK_REC_ALGO_SEL field and return
+   * the value */
+
+  (void)spirit_reg_read(spirit, FDEV0_BASE, &regval, 1);
+
+  return (enum spirit_clkrecmode_e)(regval & 0x08);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_clkrecgain
+ *
+ * Description:
+ *   Sets the clock recovery proportional gain.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   pgain  - The Clock Recovery proportional gain to write in the
+ *            CLK_REC_P_GAIN field of CLOCKREC register.  This is the log2
+ *            value of the clock recovery proportional gain.  This value
+ *            must be in the range [0:7].
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_clkrecgain(FAR struct spirit_library_s *spirit,
+                                uint8_t pgain)
+{
+  uint8_t regval;
+
+  /* Check the parameter */
+
+  DEBUGASSERT(IS_CLK_REC_P_GAIN(pgain));
+
+  /* Read the CLOCKREC register */
+
+  spirit_reg_read(spirit, CLOCKREC_BASE, &regval, 1);
+
+  /* Mask the CLK_REC_P_GAIN field and write the new value */
+
+  regval &= 0x1f;
+  regval |= (pgain << 5);
+
+  /* Set the CLOCKREC register */
+
+  return spirit_reg_write(spirit, CLOCKREC_BASE, &regval, 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_clkrecgain
+ *
+ * Description:
+ *   Returns the log2 of the clock recovery proportional gain.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Clock Recovery proportional gain read from the CLK_REC_P_GAIN field of
+ *   CLOCKREC register.  This value will be in the range [0:7].
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_clkrecgain(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the CLOCKREC register, mask the CLK_REC_P_GAIN field and return the
+   * value */
+
+  (void)spirit_reg_read(spirit, CLOCKREC_BASE, &regval, 1);
+
+  return ((regval & 0xef) >> 5);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_clkrecigain
+ *
+ * Description:
+ *   Sets the clock recovery integral gain.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   igain  - The Clock Recovery integral gain to write in the CLK_REC_I_GAIN
+ *            field of CLOCKREC register. This value must be in the range
+ *            [0:15].
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_clkrecigain(FAR struct spirit_library_s *spirit,
+                                 uint8_t igain)
+{
+  uint8_t regval;
+
+  /* Check the parameter */
+
+  DEBUGASSERT(IS_CLK_REC_I_GAIN(igain));
+
+  /* Read the CLOCKREC register */
+
+  spirit_reg_read(spirit, CLOCKREC_BASE, &regval, 1);
+
+  /* Mask the CLK_REC_P_GAIN field and write the new value */
+
+  regval &= 0xf0;
+  regval |= igain;
+
+  /* Set the CLOCKREC register */
+
+  return spirit_reg_write(spirit, CLOCKREC_BASE, &regval, 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_clkrecigain
+ *
+ * Description:
+ *   Returns the clock recovery integral gain.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Clock Recovery integral gain read from the CLK_REC_I_GAIN field of
+ *   CLOCKREC register.  This value will be in the range [0:15].
+ *
+ ******************************************************************************/
+
+uint8_t spirit_radio_get_clkrecigain(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the CLOCKREC register, mask the CLK_REC_I_GAIN field and return the
+   * value.
+   */
+
+  (void)spirit_reg_read(spirit, CLOCKREC_BASE, &regval, 1);
+
+  return (regval & 0x0f);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_set_clkrecpstfltlen
+ *
+ * Description:
+ *   Sets the postfilter length for clock recovery algorithm.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *   length - The postfilter length in symbols. This value can be one of
+ *            the values defined in enum spirit_pstfltlen_e :
+ *
+ *              PSTFLT_LENGTH_8   Postfilter length is 8 symbols
+ *              PSTFLT_LENGTH_16  Postfilter length is 16 symbols
+ *
+ * Returned Value:
+ *   Zero (OK) on success.  A negated errno value is returned on any failure.
+ *
+ ******************************************************************************/
+
+int spirit_radio_set_clkrecpstfltlen(FAR struct spirit_library_s *spirit,
+                                     enum spirit_pstfltlen_e length)
+{
+  uint8_t regval;
+
+  /* Check the parameter */
+
+  DEBUGASSERT(IS_PST_FLT_LENGTH(length));
+
+  /* Read the CLOCKREC register */
+
+  spirit_reg_read(spirit, CLOCKREC_BASE, &regval, 1);
+
+  /* Mask the PSTFLT_LEN field and write the new value */
+
+  regval &= 0xef;
+  regval |= (uint8_t) length;
+
+  /* Set the CLOCKREC register */
+
+  return spirit_reg_write(spirit, CLOCKREC_BASE, &regval, 1);
+}
+
+/******************************************************************************
+ * Name: spirit_radio_get_clkrecpstfltlen
+ *
+ * Description:
+ *   Returns the postfilter length for clock recovery algorithm.
+ *
+ * Input Parameters:
+ *   spirit - Reference to a Spirit library state structure instance
+ *
+ * Returned Value:
+ *   Postfilter length in symbols. This value can be one of the values
+ *   defined in enum spirit_pstfltlen_e:
+ *
+ *     PSTFLT_LENGTH_8   Postfilter length is 8 symbols
+ *     PSTFLT_LENGTH_16  Postfilter length is 16 symbols
+ *
+ ******************************************************************************/
+
+enum spirit_pstfltlen_e
+  spirit_radio_get_clkrecpstfltlen(FAR struct spirit_library_s *spirit)
+{
+  uint8_t regval;
+
+  /* Read the CLOCKREC register, mask the PSTFLT_LEN field and return the
+   * value */
+
+  (void)spirit_reg_read(spirit, CLOCKREC_BASE, &regval, 1);
+
+  return (enum spirit_pstfltlen_e)(regval & 0x10);
 }
 
 /******************************************************************************
@@ -1740,7 +4528,7 @@ int spirit_radio_enable_csblanking(FAR struct spirit_library_s *spirit,
 
   DEBUGASSERT(IS_SPIRIT_FUNCTIONAL_STATE(newstate));
 
-  /* Reads the ANT_SELECT_CONF_BASE and mask the CS_BLANKING BIT field */
+  /* Read the ANT_SELECT_CONF_BASE and mask the CS_BLANKING BIT field */
 
   ret = spirit_reg_read(spirit, ANT_SELECT_CONF_BASE, &regval, 1);
   if (ret >= 0)
@@ -1787,7 +4575,7 @@ int spirit_radio_persistentrx(FAR struct spirit_library_s *spirit,
 
   DEBUGASSERT(IS_SPIRIT_FUNCTIONAL_STATE(newstate));
 
-  /* Reads the PROTOCOL0_BASE and mask the PROTOCOL0_PERS_RX_MASK bitfield */
+  /* Read the PROTOCOL0_BASE and mask the PROTOCOL0_PERS_RX_MASK bitfield */
 
   ret = spirit_reg_read(spirit, PROTOCOL0_BASE, &regval, 1);
   if (ret >= 0)
@@ -1801,7 +4589,7 @@ int spirit_radio_persistentrx(FAR struct spirit_library_s *spirit,
           regval &= (~PROTOCOL0_PERS_RX_MASK);
         }
 
-      /* Writes the new value in the PROTOCOL0_BASE register */
+      /* Write the new value to the PROTOCOL0_BASE register */
 
       ret = spirit_reg_write(spirit, PROTOCOL0_BASE, &regval, 1);
     }
@@ -1834,7 +4622,7 @@ int spirit_radio_set_refdiv(FAR struct spirit_library_s *spirit,
 
   DEBUGASSERT(IS_SPIRIT_FUNCTIONAL_STATE(newstate));
 
-  /* Reads the SYNTH_CONFIG1_BASE and mask the REFDIV bit field */
+  /* Read the SYNTH_CONFIG1_BASE and mask the REFDIV bit field */
 
   ret = spirit_reg_read(spirit, SYNTH_CONFIG1_BASE, &regval, 1);
   if (ret >= 0)
@@ -1848,7 +4636,7 @@ int spirit_radio_set_refdiv(FAR struct spirit_library_s *spirit,
           regval &= 0x7f;
         }
 
-      /* Writes the new value in the SYNTH_CONFIG1_BASE register */
+      /* Write the new value to the SYNTH_CONFIG1_BASE register */
 
       ret = spirit_reg_write(spirit, SYNTH_CONFIG1_BASE, &regval, 1);
     }
@@ -1912,10 +4700,10 @@ int spirit_radio_enable_digdivider(FAR struct spirit_library_s *spirit,
 
   DEBUGASSERT(IS_SPIRIT_FUNCTIONAL_STATE(newstate));
 
-  /* Reads the XO_RCO_TEST_BASE and mask the PD_CLKDIV bit field */
+  /* Read the XO_RCO_TEST_BASE and mask the PD_CLKDIV bit field */
 
   ret = spirit_reg_read(spirit, XO_RCO_TEST_BASE, &regval, 1);
-  if (ret > 0)
+  if (ret >= 0)
     {
       if (newstate == S_ENABLE)
         {
