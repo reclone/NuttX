@@ -107,15 +107,16 @@
  *         = 48,000,000
  */
 
-#define STM32_BOARD_USEHSI
+/* #define STM32_BOARD_USEHSI */
 #ifdef STM32_BOARD_USEHSI
+  /* Use internal high speed ~16MHz RC oscillator */
   #define STM32_PLLCFG_PLLM       RCC_PLLCFG_PLLM(8)
-  #define STM32_PLLCFG_PLLN       RCC_PLLCFG_PLLN(168)
 #else
+  /* Use external 10MHz oscillator (bypassing internal HSE oscillator) */
   #define STM32_RCC_CR_HSEBYP
   #define STM32_PLLCFG_PLLM       RCC_PLLCFG_PLLM(5)
-  #define STM32_PLLCFG_PLLN       RCC_PLLCFG_PLLN(168)
 #endif
+#define STM32_PLLCFG_PLLN       RCC_PLLCFG_PLLN(168)
 #define STM32_PLLCFG_PLLP       RCC_PLLCFG_PLLP_2
 #define STM32_PLLCFG_PLLQ       RCC_PLLCFG_PLLQ(7)
 

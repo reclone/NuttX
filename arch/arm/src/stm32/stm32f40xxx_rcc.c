@@ -641,9 +641,11 @@ static void stm32_stdclockconfig(void)
 
 #else /* if STM32_BOARD_USEHSE */
   /* Enable External High-Speed Clock (HSE) */
+
 #ifdef STM32_RCC_CR_HSEBYP
+  /* Bypass HSE oscillator when using an external oscillator module */
+  /* Do NOT define STM32_RCC_CR_HSEBYP when using a crystal with HSE */
   regval  = getreg32(STM32_RCC_CR);
-  regval &= ~RCC_CR_HSION;
   regval |= RCC_CR_HSEBYP;
   putreg32(regval, STM32_RCC_CR);
 #endif
@@ -651,10 +653,6 @@ static void stm32_stdclockconfig(void)
   regval  = getreg32(STM32_RCC_CR);
   regval |= RCC_CR_HSEON;           /* Enable HSE */
   putreg32(regval, STM32_RCC_CR);
-
-//#ifdef STM32_RCC_CR_HSEBYP
-//   timeout = HSERDY_TIMEOUT;
-//#else
   
   /* Wait until the HSE is ready (or until a timeout elapsed) */
 
