@@ -135,7 +135,7 @@ config LIS331DL_I2C_FREQUENCY
 config SN_LSM9DS1
 	bool "STMicro LSM9DS1 support"
 	default n
-	depends on I2C
+	select I2C
 	---help---
 		Enable driver support for the STMicro LSM9DS1.
 
@@ -166,6 +166,13 @@ config DEBUG_LPS25H
 		Enables debug features for the LPS25H
 
 endif # LPS25H
+
+config LTC4151
+	bool "LTC4151 current and voltage monitor"
+	default n
+	select I2C
+	---help---
+		Enable driver support for the LinearTechnology LTC4151 current and voltage monitor.
 
 config MB7040
 	bool "MaxBotix MB7040 Sonar support"
