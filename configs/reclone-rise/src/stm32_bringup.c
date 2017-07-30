@@ -65,6 +65,10 @@
 #  include <nuttx/leds/userled.h>
 #endif
 
+#ifdef CONFIG_SYSLOG_CHARDEV
+#  include <nuttx/syslog/syslog.h>
+#endif
+
 #include "stm32f4discovery.h"
 
 /* Conditional logic in stm32f4discover.h will determine if certain features
@@ -275,6 +279,10 @@ int stm32_bringup(void)
 
 #ifdef CONFIG_XEN1210
   ret = xen1210_archinitialize(0);
+#endif
+
+#ifdef CONFIG_SYSLOG_CHARDEV
+  syslog_register();
 #endif
 
   return ret;
