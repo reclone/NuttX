@@ -464,7 +464,9 @@ static void stm32_disconnect(FAR struct usbhost_driver_s *drvr,
 static void stm32_portreset(FAR struct stm32_usbhost_s *priv);
 static void stm32_flush_txfifos(uint32_t txfnum);
 static void stm32_flush_rxfifo(void);
+#ifdef CONFIG_STM32_OTGFS_VBUS_CONTROL
 static void stm32_vbusdrive(FAR struct stm32_usbhost_s *priv, bool state);
+#endif
 static void stm32_host_initialize(FAR struct stm32_usbhost_s *priv);
 
 static inline void stm32_sw_initialize(FAR struct stm32_usbhost_s *priv);
@@ -5008,6 +5010,7 @@ static void stm32_flush_rxfifo(void)
  *
  ****************************************************************************/
 
+#ifdef CONFIG_STM32_OTGFS_VBUS_CONTROL
 static void stm32_vbusdrive(FAR struct stm32_usbhost_s *priv, bool state)
 {
   uint32_t regval;
@@ -5036,6 +5039,7 @@ static void stm32_vbusdrive(FAR struct stm32_usbhost_s *priv, bool state)
 
   up_mdelay(200);
 }
+#endif /* CONFIG_STM32_OTGFS_VBUS_CONTROL */
 
 /****************************************************************************
  * Name: stm32_host_initialize
@@ -5115,11 +5119,15 @@ static void stm32_host_initialize(FAR struct stm32_usbhost_s *priv)
       stm32_putreg(STM32_OTGFS_HCINTMSK(i), 0);
     }
 
+#ifdef CONFIG_STM32_OTGFS_VBUS_CONTROL
+
   /* Driver Vbus +5V (the smoke test).  Should be done elsewhere in OTG
    * mode.
    */
 
   stm32_vbusdrive(priv, true);
+
+#endif
 
   /* Enable host interrupts */
 
@@ -5383,7 +5391,10 @@ FAR struct usbhost_connection_s *stm32_otgfshost_initialize(int controller)
 
   stm32_configgpio(GPIO_OTGFS_DM);
   stm32_configgpio(GPIO_OTGFS_DP);
+
+#ifdef CONFIG_USBDEV
   stm32_configgpio(GPIO_OTGFS_ID);    /* Only needed for OTG */
+#endif
 
   /* SOF output pin configuration is configurable */
 

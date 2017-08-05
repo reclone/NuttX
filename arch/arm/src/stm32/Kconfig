@@ -6828,6 +6828,15 @@ config STM32_OTGFS_SOFINTR
 	---help---
 		Enable SOF interrupts.  Why would you ever want to do that?
 
+config STM32_OTGFS_VBUS_CONTROL
+	bool "Enable VBus Control"
+	default y
+	depends on USBHOST && STM32_OTGFS
+	---help---
+		Enable VBus control.  Used when the board has VBus sensing, over current
+		detection, and a power switch for the OTG FS USB port.  Disable this
+		config if the board is missing this USB VBus control circuitry.
+
 endmenu
 
 menu "USB HS Host Configuration"
@@ -6866,6 +6875,15 @@ config STM32_OTGHS_SOFINTR
 	depends on USBHOST && STM32_OTGHS
 	---help---
 		Enable SOF interrupts.  Why would you ever want to do that?
+
+config STM32_OTGHS_VBUS_CONTROL
+	bool "Enable VBus Control"
+	default y
+	depends on USBHOST && STM32_OTGHS
+	---help---
+		Enable VBus control.  Used when the board has VBus sensing, over current
+		detection, and a power switch for the OTG HS USB port.  Disable this
+		config if the board is missing this USB VBus control circuitry.
 
 endmenu
 
