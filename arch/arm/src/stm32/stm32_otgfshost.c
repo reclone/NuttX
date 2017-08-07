@@ -5281,11 +5281,9 @@ static inline int stm32_hw_initialize(FAR struct stm32_usbhost_s *priv)
 
   /* Deactivate the power down */
 
-  regval  = OTGFS_GCCFG_PWRDWN;
+  regval  = (OTGFS_GCCFG_PWRDWN | OTGFS_GCCFG_VBUSASEN | OTGFS_GCCFG_VBUSBSEN);
 #if !defined(CONFIG_USBDEV_VBUSSENSING) && !defined(CONFIG_STM32_OTGFS_VBUS_CONTROL)
   regval |= OTGFS_GCCFG_NOVBUSSENS;
-#else
-  regval |= (OTGFS_GCCFG_VBUSASEN | OTGFS_GCCFG_VBUSBSEN);
 #endif
 #ifdef CONFIG_STM32_OTGFS_SOFOUTPUT
   regval |= OTGFS_GCCFG_SOFOUTEN;
